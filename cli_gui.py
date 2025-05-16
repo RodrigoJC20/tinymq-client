@@ -9,6 +9,9 @@ from tkinter import ttk, scrolledtext, messagebox, simpledialog  # Añadido simp
 import threading
 import time
 from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
+import json
+
 import re
 
 from tinymq import Client, DataAcquisitionService, Database
@@ -16,7 +19,7 @@ from tinymq import Client, DataAcquisitionService, Database
 class TinyMQGUI:
     """Interfaz gráfica simplificada para el cliente TinyMQ."""
 
-    def __init__(self, root):
+    def __init__(self, root):  # Cambiar _init_ a __init__
         self.root = root
         self.root.title("TinyMQ Client")
         self.root.geometry("900x600")
@@ -96,16 +99,33 @@ class TinyMQGUI:
         # Cliente
         client_frame = ttk.LabelFrame(tab, text="Identidad")
         client_frame.pack(fill="x", padx=10, pady=5)
-        ttk.Label(client_frame, text="ID:").pack(side="left", padx=5)
+        
+        # Inicializar todas las variables StringVar primero
         self.client_id_var = tk.StringVar()
+        self.name_var = tk.StringVar()
+        self.email_var = tk.StringVar()
+        
+        # Ahora cargar los datos y asignarlos a las variables
+        current_id = self.db.get_client_id() or ""
+        self.client_id_var.set(current_id)
+        
+        # Cargar metadatos
+        metadata = self.db.get_client_metadata()
+        if metadata:
+            self.name_var.set(metadata.get("name", ""))
+            self.email_var.set(metadata.get("email", ""))
+        
+        # Ahora crear los widgets con las variables ya inicializadas
+        ttk.Label(client_frame, text="ID:").pack(side="left", padx=5)
         ttk.Entry(client_frame, textvariable=self.client_id_var, width=15).pack(side="left", padx=5)
         ttk.Button(client_frame, text="Cambiar ID", command=self.change_client_id).pack(side="left", padx=5)
+        
         ttk.Label(client_frame, text="Nombre:").pack(side="left", padx=5)
-        self.name_var = tk.StringVar()
         ttk.Entry(client_frame, textvariable=self.name_var, width=15).pack(side="left", padx=5)
+        
         ttk.Label(client_frame, text="Email:").pack(side="left", padx=5)
-        self.email_var = tk.StringVar()
         ttk.Entry(client_frame, textvariable=self.email_var, width=20).pack(side="left", padx=5)
+        
         ttk.Button(client_frame, text="Actualizar", command=self.update_metadata).pack(side="left", padx=5)
 
         # Estadísticas
@@ -115,7 +135,6 @@ class TinyMQGUI:
         self.stats_text.pack(fill="both", expand=True, padx=5, pady=5)
         self.stats_text.config(state="disabled")
         ttk.Button(stats_frame, text="Refrescar", command=self.refresh_stats).pack(pady=5)
-
 
     def create_sensors_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -256,15 +275,16 @@ class TinyMQGUI:
         main_frame = ttk.Frame(tab)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Lista de tópicos
+        # Lista de tópicos con selección múltiple
         left = ttk.LabelFrame(main_frame, text="Tópicos")
         left.pack(side="left", fill="y", padx=(0, 10))
-        self.topics_listbox = tk.Listbox(left, width=30)
+        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED)  # Cambio aquí para permitir selección múltiple
         self.topics_listbox.pack(fill="y", expand=True, padx=5, pady=5)
         self.topics_listbox.bind('<<ListboxSelect>>', self.on_topic_selected)
         ttk.Button(left, text="Refrescar", command=self.refresh_topics).pack(fill="x", padx=5, pady=5)
         # Botón para crear tópico
         ttk.Button(left, text="Crear Tópico", command=self.open_create_topic_dialog).pack(fill="x", padx=5, pady=5)
+
 
         # Detalles y acciones
         right = ttk.LabelFrame(main_frame, text="Detalles")
@@ -430,11 +450,18 @@ class TinyMQGUI:
         if not client_id:
             return
         
+        # Verificar si ya existe una suscripción para este tópico y cliente
+        subscriptions = self.db.get_subscriptions()
+        for sub in subscriptions:
+            if sub["topic"] == topic_name and sub["source_client_id"] == client_id:
+                messagebox.showinfo("Información", f"Ya estás suscrito al tópico '{topic_name}' del cliente '{client_id}'")
+                return
+        
         # Si estamos conectados al broker, proceder con la suscripción
         if not self.client or not self.client.connected:
             messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
             return
-            
+                
         try:
             self.db.add_subscription(topic_name, client_id)
             def subscription_callback(topic_str, message):
@@ -456,7 +483,7 @@ class TinyMQGUI:
                 messagebox.showerror("Error", "No se pudo suscribir al tópico")
         except Exception as e:
             messagebox.showerror("Error", f"Error al suscribirse: {str(e)}")
-            
+        
     def start_das(self):
         try:
             self.das = DataAcquisitionService(self.db, verbose=False)
@@ -503,6 +530,12 @@ class TinyMQGUI:
                 self.connect_btn.config(state="disabled")
                 self.disconnect_btn.config(state="normal")
                 self.status_label.config(text=f"Conectado a {host}:{port} (ID: {client_id})")
+
+                # Start publishing topics marked for publishing
+                published_topics = self.db.get_published_topics()
+                for topic_info in published_topics:
+                    # Add callback for sensor data to publish to this topic
+                    self._setup_topic_publishing(topic_info["name"])
             else:
                 messagebox.showerror("Error", "No se pudo conectar al broker")
         except Exception as e:
@@ -520,12 +553,28 @@ class TinyMQGUI:
                 messagebox.showerror("Error", f"Error al desconectar: {str(e)}")
         else:
             messagebox.showinfo("Información", "No hay conexión activa")
-
     def change_client_id(self):
         new_id = self.client_id_var.get().strip()
         if not new_id:
             messagebox.showerror("Error", "El ID del cliente no puede estar vacío")
             return
+        
+        # Verificar si está conectado
+        if self.client and self.client.connected:
+            respuesta = messagebox.askyesno("Atención", 
+                "Cambiar el ID requiere desconectarse del broker. ¿Deseas continuar?")
+            if not respuesta:
+                return
+            # Desconectar antes de cambiar el ID
+            try:
+                self.client.disconnect()
+                self.status_var.set("Desconectado")
+                self.connect_btn.config(state="normal")
+                self.disconnect_btn.config(state="disabled")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al desconectar: {str(e)}")
+                return
+        
         try:
             self.db.set_client_id(new_id)
             messagebox.showinfo("Éxito", f"ID de cliente cambiado a: {new_id}")
@@ -535,6 +584,23 @@ class TinyMQGUI:
     def update_metadata(self):
         name = self.name_var.get().strip()
         email = self.email_var.get().strip()
+        
+        # Verificar si está conectado
+        if self.client and self.client.connected:
+            respuesta = messagebox.askyesno("Atención", 
+                "Actualizar metadatos requiere desconectarse del broker. ¿Deseas continuar?")
+            if not respuesta:
+                return
+            # Desconectar antes de cambiar metadatos
+            try:
+                self.client.disconnect()
+                self.status_var.set("Desconectado")
+                self.connect_btn.config(state="normal")
+                self.disconnect_btn.config(state="disabled")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al desconectar: {str(e)}")
+                return
+        
         metadata = self.db.get_client_metadata()
         if name:
             metadata["name"] = name
@@ -650,6 +716,8 @@ class TinyMQGUI:
         selection = self.topics_listbox.curselection()
         if not selection:
             return
+        
+        # Usar el primer tópico seleccionado para mostrar detalles
         selected_index = selection[0]
         selected_item = self.topics_listbox.get(selected_index)
         topic_id = selected_item.split(":")[0].strip()
@@ -673,51 +741,149 @@ class TinyMQGUI:
             messagebox.showerror("Error", f"Error al cargar detalles del tópico: {str(e)}")
 
     def toggle_topic_publish(self, publish):
-        topic_name = self.topic_name_var.get()
-        if not topic_name:
-            messagebox.showinfo("Información", "Selecciona un tópico primero")
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Información", "Selecciona al menos un tópico primero")
             return
-        try:
-            self.db.set_topic_publish(topic_name, publish)
-            self.topic_publish_var.set("Sí" if publish else "No")
-            state = "activada" if publish else "desactivada"
-            messagebox.showinfo("Éxito", f"Publicación {state} para el tópico '{topic_name}'")
+        
+        # Almacenar IDs de tópicos para reselección posterior
+        selected_topic_ids = []
+        for idx in selection:
+            item = self.topics_listbox.get(idx)
+            topic_id = item.split(":")[0].strip()
+            selected_topic_ids.append(topic_id)
+        
+        success_count = 0
+        
+        for selected_index in selection:
+            selected_item = self.topics_listbox.get(selected_index)
+            topic_id = selected_item.split(":")[0].strip()
+            try:
+                topic = self.db.get_topic(topic_id)
+                if not topic:
+                    continue
+                
+                # Saltar silenciosamente si el tópico ya está en el estado deseado
+                if topic["publish"] == publish:
+                    continue
+                
+                self.db.set_topic_publish(topic["name"], publish)
+                success_count += 1
+            except Exception as e:
+                messagebox.showerror("Error", f"Error en tópico ID {topic_id}: {str(e)}")
+        
+        # Actualizar UI si se realizaron cambios
+        if success_count > 0:
+            # Actualizar el panel de detalles
+            if len(selection) > 0:
+                self.topic_publish_var.set("Sí" if publish else "No")
+            
+            # Refrescar listas
             self.refresh_topics()
-            self.refresh_public_topics()  # Añadir esta línea para actualizar tópicos públicos
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al cambiar estado de publicación: {str(e)}")
+            self.refresh_public_topics()
+            
+            # Reseleccionar tópicos después de refrescar
+            for i in range(self.topics_listbox.size()):
+                item = self.topics_listbox.get(i)
+                topic_id = item.split(":")[0].strip()
+                if topic_id in selected_topic_ids:
+                    self.topics_listbox.selection_set(i)
+            
+            # Mostrar mensaje de éxito
+            state = "activada" if publish else "desactivada"
+            messagebox.showinfo("Éxito", f"Publicación {state} para {success_count} tópico(s)")
 
     def add_sensor_to_topic(self):
-        topic_name = self.topic_name_var.get()
-        sensor_name = self.sensor_to_add_var.get()
-        if not topic_name or not sensor_name:
-            messagebox.showinfo("Información", "Selecciona un tópico y un sensor")
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Información", "Selecciona al menos un tópico")
             return
-        try:
-            sensors = self.db.get_topic_sensors(topic_name)
-            for sensor in sensors:
-                if sensor["name"] == sensor_name:
-                    messagebox.showinfo("Información", f"El sensor '{sensor_name}' ya está en el tópico")
-                    return
-            self.db.add_sensor_to_topic(topic_name, sensor_name)
-            messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' añadido al tópico '{topic_name}'")
+            
+        sensor_name = self.sensor_to_add_var.get()
+        if not sensor_name:
+            messagebox.showinfo("Información", "Selecciona un sensor para agregar")
+            return
+        
+        success_count = 0
+        for selected_index in selection:
+            selected_item = self.topics_listbox.get(selected_index)
+            topic_id = selected_item.split(":")[0].strip()
+            try:
+                topic = self.db.get_topic(topic_id)
+                if not topic:
+                    continue
+                
+                # Verificar si el sensor ya está en el tópico
+                sensors = self.db.get_topic_sensors(topic["name"])
+                sensor_exists = False
+                for sensor in sensors:
+                    if sensor["name"] == sensor_name:
+                        sensor_exists = True
+                        break
+                
+                if sensor_exists:
+                    continue
+                
+                self.db.add_sensor_to_topic(topic["name"], sensor_name)
+                success_count += 1
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al agregar sensor al tópico ID {topic_id}: {str(e)}")
+        
+        if success_count > 0:
+            messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' añadido a {success_count} tópico(s)")
             self.on_topic_selected(None)
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al añadir sensor: {str(e)}")
 
     def remove_sensor_from_topic(self):
-        topic_name = self.topic_name_var.get()
-        sensor_name = self.sensor_to_add_var.get()
-        if not topic_name or not sensor_name:
-            messagebox.showinfo("Información", "Selecciona un tópico y un sensor")
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Información", "Selecciona al menos un tópico")
             return
-        try:
-            self.db.remove_sensor_from_topic(topic_name, sensor_name)
-            messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' eliminado del tópico '{topic_name}'")
-            self.on_topic_selected(None)
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al eliminar sensor: {str(e)}")
-
+            
+        sensor_name = self.sensor_to_add_var.get()
+        if not sensor_name:
+            messagebox.showinfo("Información", "Selecciona un sensor para eliminar")
+            return
+        
+        success_count = 0
+        not_found_topics = []
+        
+        for selected_index in selection:
+            selected_item = self.topics_listbox.get(selected_index)
+            topic_id = selected_item.split(":")[0].strip()
+            try:
+                topic = self.db.get_topic(topic_id)
+                if not topic:
+                    continue
+                
+                # Verificar si el sensor está en el tópico
+                sensors = self.db.get_topic_sensors(topic["name"])
+                sensor_exists = False
+                for sensor in sensors:
+                    if sensor["name"] == sensor_name:
+                        sensor_exists = True
+                        break
+                
+                if not sensor_exists:
+                    not_found_topics.append(topic["name"])
+                    continue
+                
+                self.db.remove_sensor_from_topic(topic["name"], sensor_name)
+                success_count += 1
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al eliminar sensor del tópico ID {topic_id}: {str(e)}")
+        
+        message = ""
+        if success_count > 0:
+            message = f"Sensor '{sensor_name}' eliminado de {success_count} tópico(s). "
+            
+        if not_found_topics:
+            message += f"Advertencia: El sensor no estaba presente en los tópicos: {', '.join(not_found_topics)}"
+            
+        if message:
+            messagebox.showinfo("Resultado", message)
+        
+        self.on_topic_selected(None)
+    
     def refresh_subscriptions(self):
         try:
             subscriptions = self.db.get_subscriptions()
@@ -754,6 +920,14 @@ class TinyMQGUI:
         if not topic or not source_client:
             messagebox.showinfo("Información", "Completa tópico y cliente origen")
             return
+        
+        # Verificar si ya existe una suscripción para este tópico y cliente
+        subscriptions = self.db.get_subscriptions()
+        for sub in subscriptions:
+            if sub["topic"] == topic and sub["source_client_id"] == source_client:
+                messagebox.showinfo("Información", f"Ya estás suscrito al tópico '{topic}' del cliente '{source_client}'")
+                return
+                
         try:
             self.db.add_subscription(topic, source_client)
             def subscription_callback(topic_str, message):
@@ -860,6 +1034,44 @@ class TinyMQGUI:
         self.sub_data_text.config(state="normal")
         self.sub_data_text.delete("1.0", tk.END)
         self.sub_data_text.config(state="disabled")
+
+    def _setup_topic_publishing(self, topic_name: str) -> None:
+        """
+        Setup publishing for a topic.
+        
+        Args:
+            topic_name: Name of topic to publish
+        """
+        if not self.das or not self.client or not self.client.connected:
+            return
+        
+        sensors = self.db.get_topic_sensors(topic_name)
+        if not sensors:
+            return
+            
+        sensor_names = [s["name"] for s in sensors]
+        
+        def publish_callback(sensor_name: str, data: Dict[str, Any]) -> None:
+            current_topic_info = self.db.get_topic(topic_name)
+            if not current_topic_info or not current_topic_info["publish"]:
+                return
+            
+            if sensor_name in sensor_names and self.client and self.client.connected:
+                message = {
+                    "sensor": sensor_name,
+                    "value": data["value"],
+                    "timestamp": data["timestamp"],
+                    "units": data["units"]
+                }
+                try:
+                    json_message = json.dumps(message)
+                    result = self.client.publish(topic_name, json_message)
+                    if not result:
+                        messagebox.showinfo("Error", f'Error al publicar en el topico {topic_name}')
+                except Exception as e:
+                    messagebox.showinfo("Error", f'Error: {e}')
+        
+        self.das.add_data_callback(publish_callback)
 
 def main():
     root = tk.Tk()
