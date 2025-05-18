@@ -464,16 +464,34 @@ class TinyMQGUI:
                 
         try:
             self.db.add_subscription(topic_name, client_id)
+            
+            # Definir las variables que se usarán en la closure
+            _topic_name = topic_name  # Crear copia local para el closure
+            _client_id = client_id    # Crear copia local para el closure
+            
             def subscription_callback(topic_str, message):
                 try:
+                    # Registrar el mensaje recibido para depuración
+                    print(f"DEBUG: Recibido mensaje para tópico {topic_str}")
                     message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
                     timestamp = int(time.time())
-                    self.db.add_subscription_data(topic_name, client_id, timestamp, message_str)
-                    self.add_realtime_message("Recibido", f"Tópico: {topic_name} ({client_id})\nMensaje: {message_str}")
+                    print(f"DEBUG: Contenido del mensaje: {message_str}")
+                    
+                    # Guardar en la base de datos
+                    self.db.add_subscription_data(_topic_name, _client_id, timestamp, message_str)
+                    self.add_realtime_message("Recibido", f"Tópico: {_topic_name} ({_client_id})\nMensaje: {message_str}")
+                    
+                    # Actualizar la interfaz si estamos viendo este mismo tópico
+                    if self.sub_topic_var.get() == _topic_name and self.sub_client_var.get() == _client_id:
+                        self.root.after(0, self.view_sub_data)
                 except Exception as e:
-                    print(f"Error en callback de suscripción: {e}")
+                    print(f"ERROR en callback: {e}")
+                    import traceback
+                    traceback.print_exc()
             
+            # El formato CORRECTO del tópico en el broker es client_id/topic_name
             broker_topic = f"{client_id}/{topic_name}"
+            print(f"Suscribiéndose a tópico del broker: {broker_topic}")
             success = self.client.subscribe(broker_topic, subscription_callback)
             if success:
                 messagebox.showinfo("Éxito", f"Suscrito al tópico '{topic_name}' del cliente '{client_id}'")
@@ -914,6 +932,7 @@ class TinyMQGUI:
         if not self.client or not self.client.connected:
             messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
             return
+        
         # Usar las variables en lugar de .get()
         topic = self.sub_topic_var.get().strip()
         source_client = self.sub_client_var.get().strip()
@@ -930,16 +949,23 @@ class TinyMQGUI:
                 
         try:
             self.db.add_subscription(topic, source_client)
+            
+            # Definir las variables que se usarán en la closure
+            _topic = topic  # Crear copia local para el closure
+            _source_client = source_client  # Crear copia local para el closure
+            
             def subscription_callback(topic_str, message):
                 try:
                     message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
                     timestamp = int(time.time())
-                    self.db.add_subscription_data(topic, source_client, timestamp, message_str)
-                    self.add_realtime_message("Recibido", f"Tópico: {topic} ({source_client})\nMensaje: {message_str}")
-                except Exception:
-                    pass
+                    # Usar las variables del closure
+                    self.db.add_subscription_data(_topic, _source_client, timestamp, message_str)
+                    self.add_realtime_message("Recibido", f"Tópico: {_topic} ({_source_client})\nMensaje: {message_str}")
+                except Exception as e:
+                    print(f"ERROR en callback: {e}")
             
             broker_topic = f"{source_client}/{topic}"
+            print(f"Suscribiéndose a tópico del broker: {broker_topic}")
             success = self.client.subscribe(broker_topic, subscription_callback)
             if success:
                 messagebox.showinfo("Éxito", f"Suscrito al tópico '{topic}' del cliente '{source_client}'")
@@ -987,19 +1013,28 @@ class TinyMQGUI:
 
     def add_realtime_message(self, source, content):
         """Muestra mensajes recibidos en las suscripciones en tiempo real."""
+        print(f"DEBUG: add_realtime_message recibió: {source}, {content}")
+        
         # Verificar si hay una suscripción seleccionada que coincida con el origen
         topic = self.sub_topic_var.get()
         client = self.sub_client_var.get()
         
-        # Si hay una suscripción seleccionada y el mensaje coincide con su origen,
-        # actualizar la vista de datos de suscripción
-        if topic and client and source == "Recibido" and content.startswith(f"Tópico: {topic} ({client})"):
-            # Extraer el mensaje de la cadena content
-            message_start = content.find("\nMensaje: ")
-            if message_start > 0:
-                message_text = content[message_start + 10:]  # +10 para saltar "\nMensaje: "
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.root.after(0, lambda: self.append_to_sub_data(f"[{timestamp}] {message_text}\n"))
+        # Extraer información del contenido
+        message_start = content.find("\nMensaje: ")
+        if message_start > 0:
+            topic_info = content[:message_start]  # Extraer información del tópico
+            message_text = content[message_start + 10:]  # +10 para saltar "\nMensaje: "
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            print(f"DEBUG: Mensaje para mostrar: [{timestamp}] {message_text}")
+            
+            # Mostrar todos los mensajes recibidos, sin importar el tópico seleccionado
+            # Si hay un tópico seleccionado, verificar si coincide, sino mostrar todos
+            if source == "Recibido":
+                if not topic or topic_info.find(topic) >= 0:
+                    self.root.after(0, lambda: self.append_to_sub_data(f"[{timestamp}] {message_text}\n"))
+        else:
+            print(f"DEBUG: Formato incorrecto en contenido: {content}")
 
     def append_to_sub_data(self, text):
         """Añade texto al área de datos de suscripción."""
