@@ -398,12 +398,12 @@ class TinyMQGUI:
         ttk.Label(controls, text="Tópico:").pack(side="left", padx=5)
         # Crear StringVar para los campos
         self.sub_topic_var = tk.StringVar()
-        self.sub_topic_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_topic_var)
+        self.sub_topic_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_topic_var)
         self.sub_topic_entry.pack(side="left", padx=5)
         
         ttk.Label(controls, text="Cliente Origen:").pack(side="left", padx=5)
         self.sub_client_var = tk.StringVar()
-        self.sub_client_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_client_var)
+        self.sub_client_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_client_var)
         self.sub_client_entry.pack(side="left", padx=5)
         
         ttk.Button(controls, text="Suscribirse", command=self.subscribe_to_topic).pack(side="left", padx=5)
@@ -541,7 +541,7 @@ class TinyMQGUI:
         try:
             if self.client and self.client.connected:
                 self.client.disconnect()
-            # Agrega el ID del usuario al mensaje de estado
+
             self.client = Client(client_id, host, port)
             if self.client.connect():
                 self.status_var.set(f"Conectado (ID: {client_id})")
@@ -549,15 +549,42 @@ class TinyMQGUI:
                 self.disconnect_btn.config(state="normal")
                 self.status_label.config(text=f"Conectado a {host}:{port} (ID: {client_id})")
 
-                # Start publishing topics marked for publishing
+                # Iniciar publicación en los tópicos marcados como publicadores
                 published_topics = self.db.get_published_topics()
                 for topic_info in published_topics:
-                    # Add callback for sensor data to publish to this topic
                     self._setup_topic_publishing(topic_info["name"])
+
+                #Re-suscribirse a todos los tópicos guardados
+                subscriptions = self.db.get_subscriptions()
+                for sub in subscriptions:
+                    topic = sub["topic"]
+                    source_client = sub["source_client_id"]
+
+                    _topic = topic
+                    _source_client = source_client
+
+                    def subscription_callback(topic_str, message, _topic=_topic, _source_client=_source_client):
+                        try:
+                            message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
+                            timestamp = int(time.time())
+                            self.db.add_subscription_data(_topic, _source_client, timestamp, message_str)
+                            self.add_realtime_message("Recibido", f"Tópico: {_topic} ({_source_client})\nMensaje: {message_str}")
+                        except Exception as e:
+                            print(f"ERROR en callback: {e}")
+
+                    broker_topic = topic if "/" in topic else f"{source_client}/{topic}"
+                    print(f"[INFO] Re-suscribiéndose a tópico del broker: {broker_topic}")
+                    success = self.client.subscribe(broker_topic, subscription_callback)
+
+                    if success:
+                        print(f"[SUCCESS] Suscrito exitosamente a '{broker_topic}'")
+                    else:
+                        print(f"[WARN] No se pudo suscribir a '{broker_topic}'")
             else:
                 messagebox.showerror("Error", "No se pudo conectar al broker")
         except Exception as e:
             messagebox.showerror("Error de conexión", str(e))
+
 
     def disconnect_from_broker(self):
         if self.client and self.client.connected:
@@ -964,7 +991,7 @@ class TinyMQGUI:
                 except Exception as e:
                     print(f"ERROR en callback: {e}")
             
-            broker_topic = f"{source_client}/{topic}"
+            broker_topic = topic if "/" in topic else f"{source_client}/{topic}"
             print(f"Suscribiéndose a tópico del broker: {broker_topic}")
             success = self.client.subscribe(broker_topic, subscription_callback)
             if success:
@@ -988,8 +1015,9 @@ class TinyMQGUI:
             return
         topic, client = match.groups()
         try:
+            broker_topic = topic if "/" in topic else f"{client}/{topic}"
             if self.client and self.client.connected:
-                self.client.unsubscribe(f"{client}/{topic}")
+                self.client.unsubscribe(f"{broker_topic}")
             self.db.remove_subscription(topic, client)
             messagebox.showinfo("Éxito", f"Cancelada suscripción al tópico '{topic}' del cliente '{client}'")
             self.refresh_subscriptions()
@@ -1032,7 +1060,7 @@ class TinyMQGUI:
             # Si hay un tópico seleccionado, verificar si coincide, sino mostrar todos
             if source == "Recibido":
                 if not topic or topic_info.find(topic) >= 0:
-                    self.root.after(0, lambda: self.append_to_sub_data(f"[{timestamp}] {message_text}\n"))
+                    self.root.after(0, lambda: self.append_to_sub_data(f"{timestamp}] {client}/{topic}  {message_text}\n"))
         else:
             print(f"DEBUG: Formato incorrecto en contenido: {content}")
 
@@ -1060,8 +1088,8 @@ class TinyMQGUI:
                 self.sub_data_text.insert(tk.END, f"Datos para el tópico '{topic}' del cliente '{client}':\n\n")
                 for item in data:
                     timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                    self.sub_data_text.insert(tk.END, f"[{timestamp}] {item['data']}\n\n")
-            self.sub_data_text.config(state="disabled")
+                    self.sub_data_text.insert(tk.END, f"[{timestamp}] {client}/{topic} - {item['data']}\n\n")
+                self.sub_data_text.config(state="disabled")
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
 
