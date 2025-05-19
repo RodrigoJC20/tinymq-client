@@ -17,7 +17,7 @@ import re
 from tinymq import Client, DataAcquisitionService, Database
 
 class TinyMQGUI:
-    """Interfaz gráfica simplificada para el cliente TinyMQ."""
+    """Interfaz gráficaa simplificada para el cliente TinyMQ."""
 
     def __init__(self, root):  # Cambiar _init_ a __init__
         self.root = root
@@ -85,6 +85,18 @@ class TinyMQGUI:
 
         frame = ttk.LabelFrame(tab, text="Estado de Conexión")
         frame.pack(fill="x", padx=10, pady=10)
+
+        # Sección para IP y puerto del servidor
+        server_frame = ttk.Frame(frame)
+        server_frame.pack(pady=5)
+        ttk.Label(server_frame, text="IP del servidor:").pack(side="left", padx=5)
+        self.host_entry = ttk.Entry(server_frame, width=16)
+        self.host_entry.pack(side="left", padx=5)
+        self.host_entry.insert(0, "10.103.151.147")  # Valor por defecto
+        ttk.Label(server_frame, text="Puerto:").pack(side="left", padx=5)
+        self.port_entry = ttk.Entry(server_frame, width=6)
+        self.port_entry.pack(side="left", padx=5)
+        self.port_entry.insert(0, "1505")  # Valor por defecto
 
         self.status_var = tk.StringVar(value="Desconectado")
         ttk.Label(frame, textvariable=self.status_var, style='Header.TLabel').pack(pady=5)
@@ -525,7 +537,7 @@ class TinyMQGUI:
     def connect_to_broker(self):
         host = getattr(self, "host_entry", None)
         port = getattr(self, "port_entry", None)
-        host = host.get().strip() if host else "192.168.1.51"
+        host = host.get().strip() if host else "10.103.151.147"
         try:
             port = int(port.get().strip()) if port else 1505
         except ValueError:
