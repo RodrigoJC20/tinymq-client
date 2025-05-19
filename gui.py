@@ -480,7 +480,7 @@ class TinyMQGUI:
     def connect_to_broker(self):
         host = getattr(self, "host_entry", None)
         port = getattr(self, "port_entry", None)
-        host = host.get().strip() if host else "localhost"
+        host = host.get().strip() if host else "192.168.1.51"
         try:
             port = int(port.get().strip()) if port else 1505
         except ValueError:
