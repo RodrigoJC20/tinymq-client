@@ -105,8 +105,9 @@ class Client:
         
         try:
             broker_topic = f"{self.client_id}/{topic}"
-            
-            broker_topic_bytes = broker_topic.encode('utf-8')
+            wrapped_topic = json.dumps([broker_topic])  # Esto crea '["client_id/topic"]'
+
+            broker_topic_bytes = wrapped_topic.encode('utf-8')
             topic_length = len(broker_topic_bytes)
             
             if topic_length > 255:
@@ -203,7 +204,7 @@ class Client:
                 if not data:
                     # Connection closed
                     break
-                
+
                 # Append to buffer
                 with self._recv_lock:
                     self._recv_buffer.extend(data)
@@ -216,7 +217,6 @@ class Client:
                     if packet is None:
                         # Need more data
                         break
-                    
                     self._handle_packet(packet)
                     consumed += bytes_consumed
                 
@@ -246,31 +246,62 @@ class Client:
         Args:
             packet: Packet to handle
         """
+
         if packet.packet_type == PacketType.CONNACK:
             self.connected = True
         
         elif packet.packet_type == PacketType.PUBACK:
             # Could track message IDs for QoS in future
+            print(f"PacketType.PUBACK")
             pass
             
         elif packet.packet_type == PacketType.SUBACK:
             # Could track subscription IDs in future
+            print(f"PacketType.SUBACK")
             pass
             
         elif packet.packet_type == PacketType.UNSUBACK:
+            print(f"PacketType.UNSUBACK")
             # Could track unsubscription IDs in future
             pass
             
         elif packet.packet_type == PacketType.PUB:
-            # Parse payload
             try:
+                # Intentar primero como JSON tradicional
                 data = json.loads(packet.payload.decode('utf-8'))
                 topic = data.get("topic")
                 message = data.get("message", "")
-                
+
                 if topic and topic in self.topic_handlers:
+                    print(f"[DEBUG] Handler JSON para tópico '{topic}'")
                     self.topic_handlers[topic](topic, message)
+
             except json.JSONDecodeError:
-                print("Invalid JSON in PUB packet")
+                raw = packet.payload
+
+                try:
+                    topic_len = raw[0]
+                    topic_bytes = raw[1:1 + topic_len]
+                    topic_raw = topic_bytes.decode('utf-8')
+
+                    try:
+                        topic = json.loads(topic_raw)[0] 
+                    except Exception:
+                        topic = topic_raw.strip('"') 
+
+                    msg_bytes = raw[1 + topic_len:]
+                    message = msg_bytes.decode('utf-8')
+
+                    if topic in self.topic_handlers:
+                        self.topic_handlers[topic](topic, message)
+                    else:
+                        print(f"[WARN] No hay handler registrado para tópico '{topic}'")
+                except Exception as e2:
+                    print(f"[ERROR] Falló el parseo personalizado del paquete PUB: {e2}")
+
+                except Exception as e:
+                    print(f"[ERROR] Fallo en formato personalizado: {e}")
+                    print(f"[ERROR] Payload completo: {raw!r}")
+
             except Exception as e:
-                print(f"Error handling PUB packet: {e}") 
+                print(f"[ERROR] Error general al manejar PUB packet: {e}")
