@@ -13,7 +13,7 @@ class DataAcquisitionService:
     Data Acquisition Service for TinyMQ client using Serial communication.
     """
 
-    def __init__(self, db: Database, serial_port: str = "COM8", baud_rate: int = 115200, verbose: bool = False):
+    def __init__(self, db: Database, serial_port: str = "COM3", baud_rate: int = 115200, verbose: bool = False):
         """
         Args:
             db: Instancia de la base de datos
@@ -86,7 +86,7 @@ class DataAcquisitionService:
             except Exception as e:
                 print(f"Error inesperado leyendo desde serial: {e}")
                 time.sleep(1)
-
+            
     def _process_data(self, data: bytes) -> int:
         """Procesa datos recibidos (en formato JSON)."""
         count = 0

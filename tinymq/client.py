@@ -37,6 +37,40 @@ class Client:
         self._recv_buffer = bytearray()
         self._recv_lock = threading.Lock()
     
+    def create_topic(self, topic: str, callback: Callable[[str, bytes], None] = None) -> bool:
+        """
+        Crea un tópico (publicando un mensaje especial) y se suscribe automáticamente a él.
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return False
+
+        if callback is None:
+            def callback(t, m):
+                print(f"[AUTO] Mensaje recibido en '{t}': {m}")
+        
+        sub_ok = self.subscribe(topic, callback)
+        if not sub_ok:
+            print(f"No se pudo suscribir al tópico '{topic}'")
+            return False
+
+        # Crear un mensaje especial que el broker pueda identificar
+        topic_create_message = json.dumps({
+            "__topic_create": True,
+            "client_id": self.client_id,
+            "topic_name": topic,
+            "timestamp": int(time.time())
+        })
+
+        # Publicar el mensaje especial en lugar de un mensaje vacío
+        pub_ok = self.publish(topic, topic_create_message)
+        if not pub_ok:
+            print(f"No se pudo crear/publicar en el tópico '{topic}'")
+            return False
+
+        print(f"[SUCCESS] Tópico '{topic}' creado correctamente en el broker")
+        return True
+    
     def connect(self) -> bool:
         """
         Connect to the TinyMQ broker.
@@ -225,7 +259,7 @@ class Client:
                     self._recv_buffer = self._recv_buffer[consumed:]
                 
             except Exception as e:
-                print(f"Read error: {e}")
+                #print(f"Read error: {e}")
                 break
         
         # Ensure we're disconnected on error, but don't call disconnect() directly
@@ -246,62 +280,170 @@ class Client:
         Args:
             packet: Packet to handle
         """
+        # Añadir debug para todos los paquetes
+        print(f"DEBUG: Recibido paquete tipo {packet.packet_type.name}, tamaño payload: {len(packet.payload)} bytes")
 
         if packet.packet_type == PacketType.CONNACK:
             self.connected = True
         
         elif packet.packet_type == PacketType.PUBACK:
             # Could track message IDs for QoS in future
-            print(f"PacketType.PUBACK")
+            print(f"DEBUG: PacketType.PUBACK")
             pass
             
         elif packet.packet_type == PacketType.SUBACK:
             # Could track subscription IDs in future
-            print(f"PacketType.SUBACK")
+            print(f"DEBUG: PacketType.SUBACK")
             pass
             
         elif packet.packet_type == PacketType.UNSUBACK:
-            print(f"PacketType.UNSUBACK")
+            print(f"DEBUG: PacketType.UNSUBACK")
             # Could track unsubscription IDs in future
             pass
             
         elif packet.packet_type == PacketType.PUB:
             try:
                 # Intentar primero como JSON tradicional
-                data = json.loads(packet.payload.decode('utf-8'))
-                topic = data.get("topic")
-                message = data.get("message", "")
-
-                if topic and topic in self.topic_handlers:
-                    print(f"[DEBUG] Handler JSON para tópico '{topic}'")
-                    self.topic_handlers[topic](topic, message)
-
-            except json.JSONDecodeError:
+                print(f"DEBUG: Procesando PUB - raw payload: {packet.payload[:100]!r}")
+                
                 raw = packet.payload
-
+                # Analizar el formato del paquete PUB: [topic_length(1) + topic_bytes + message_bytes]
                 try:
-                    topic_len = raw[0]
-                    topic_bytes = raw[1:1 + topic_len]
-                    topic_raw = topic_bytes.decode('utf-8')
+                    if len(raw) > 0:
+                        topic_len = raw[0]
+                        if len(raw) >= topic_len + 1:
+                            topic_bytes = raw[1:1 + topic_len]
+                            topic_raw = topic_bytes.decode('utf-8')
+                            
+                            try:
+                                # El tópico puede estar en formato JSON ["client_id/topic"]
+                                import json
+                                topic = json.loads(topic_raw)[0]
+                                print(f"DEBUG: Tópico JSON decodificado: {topic}")
+                            except Exception:
+                                # O como texto plano
+                                topic = topic_raw.strip('"')
+                                print(f"DEBUG: Tópico texto plano: {topic}")
 
-                    try:
-                        topic = json.loads(topic_raw)[0] 
-                    except Exception:
-                        topic = topic_raw.strip('"') 
+                            msg_bytes = raw[1 + topic_len:]
+                            message = msg_bytes.decode('utf-8')
+                            print(f"DEBUG: Mensaje decodificado ({len(message)} bytes): {message[:100]}...")
 
-                    msg_bytes = raw[1 + topic_len:]
-                    message = msg_bytes.decode('utf-8')
-
-                    if topic in self.topic_handlers:
-                        self.topic_handlers[topic](topic, message)
-                    else:
-                        print(f"[WARN] No hay handler registrado para tópico '{topic}'")
-                except Exception as e2:
-                    print(f"[ERROR] Falló el parseo personalizado del paquete PUB: {e2}")
-
+                            # Ejecutar el callback
+                            if topic in self.topic_handlers:
+                                print(f"DEBUG: Llamando al handler para tópico '{topic}'")
+                                self.topic_handlers[topic](topic, message)
+                            else:
+                                print(f"DEBUG: No hay handler registrado para tópico '{topic}', handlers disponibles: {list(self.topic_handlers.keys())}")
                 except Exception as e:
-                    print(f"[ERROR] Fallo en formato personalizado: {e}")
-                    print(f"[ERROR] Payload completo: {raw!r}")
+                    print(f"ERROR: Falló el parseo del paquete PUB: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             except Exception as e:
-                print(f"[ERROR] Error general al manejar PUB packet: {e}")
+                print(f"ERROR general en PUB: {e}")
+                import traceback
+                traceback.print_exc()
+
+    def get_published_topics(self) -> List[Dict[str, str]]:
+        """
+        Obtiene una lista de tópicos publicados desde el broker.
+        
+        Returns:
+            Lista de diccionarios con información de los tópicos publicados.
+            Cada diccionario contiene 'name' y 'owner' como claves.
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return []
+        
+        try:
+            # Crear y enviar el paquete de solicitud
+            packet = Packet(packet_type=PacketType.TOPIC_REQ)
+            if not self._send_packet(packet):
+                print("Error al enviar solicitud TOPIC_REQ")
+                return []
+            
+            # Añadir manejador para la respuesta
+            topic_response = []
+            response_received = False
+            
+            def topic_response_handler(packet_type, payload):
+                nonlocal topic_response, response_received
+                if packet_type == PacketType.TOPIC_RESP:
+                    try:
+                        # Decodificar el JSON
+                        json_str = payload.decode('utf-8')
+                        topics_data = json.loads(json_str)
+                        topic_response = topics_data
+                        response_received = True
+                    except Exception as e:
+                        print(f"Error decodificando lista de tópicos: {e}")
+                    
+            # Registrar temporalmente un handler para procesar la respuesta
+            self._register_temp_packet_handler(PacketType.TOPIC_RESP, topic_response_handler)
+            
+            # Esperar por la respuesta con timeout
+            start_time = time.time()
+            while not response_received and time.time() - start_time < 10:  # 10 segundos de timeout
+                time.sleep(0.1)  # Pequeña pausa para reducir uso de CPU
+            
+            if not response_received:
+                print("Timeout esperando respuesta del broker")
+                
+            return topic_response
+            
+        except Exception as e:
+            print(f"Error solicitando tópicos publicados: {e}")
+            return []
+        
+    def _register_temp_packet_handler(self, packet_type, handler_func):
+        """
+        Registra un manejador temporal para un tipo específico de paquete.
+        
+        Args:
+            packet_type: El tipo de paquete a manejar
+            handler_func: Función que recibe (packet_type, payload)
+        """
+        original_handle_packet = self._handle_packet
+        
+        def wrapper_handler(packet):
+            if packet.packet_type == packet_type:
+                handler_func(packet.packet_type, packet.payload)
+            return original_handle_packet(packet)
+        
+        self._handle_packet = wrapper_handler
+        
+    def set_topic_publish(self, topic: str, publish: bool = True) -> bool:
+        """
+        Cambia el estado de publicación de un tópico en el broker.
+        
+        Args:
+            topic: Nombre del tópico a modificar
+            publish: True para activar publicación, False para desactivar
+            
+        Returns:
+            True si se envió el comando correctamente, False en caso contrario
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return False
+            
+        try:
+            # Crear un mensaje especial para cambiar el estado de publicación
+            publish_message = json.dumps({
+                "__topic_publish": True,
+                "client_id": self.client_id,
+                "topic_name": topic,
+                "publish": publish,
+                "timestamp": int(time.time())
+            })
+            
+            # Publicar este mensaje en el tópico correspondiente
+            result = self.publish(topic, publish_message)
+            if result:
+                print(f"[INFO] Estado de publicación para '{topic}' cambiado a: {'ON' if publish else 'OFF'}")
+            return result
+        except Exception as e:
+            print(f"Error al cambiar estado de publicación: {e}")
+            return False

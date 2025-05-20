@@ -641,3 +641,23 @@ class Database:
             )
             
             return [dict(row) for row in cursor.fetchall()] 
+        
+    def get_broker_host(self):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT value FROM config WHERE key='broker_host'").fetchone()
+            return row[0] if row else None
+    
+    def set_broker_host(self, host):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('broker_host', ?)", (host,))
+            conn.commit()
+    
+    def get_broker_port(self):
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT value FROM config WHERE key='broker_port'").fetchone()
+            return int(row[0]) if row else None
+    
+    def set_broker_port(self, port):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('broker_port', ?)", (str(port),))
+            conn.commit()
