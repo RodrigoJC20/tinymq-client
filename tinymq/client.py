@@ -138,8 +138,11 @@ class Client:
             return False
         
         try:
-            broker_topic = f"{self.client_id}/{topic}"
-            wrapped_topic = json.dumps([broker_topic])  # Esto crea '["client_id/topic"]'
+            message_dict = json.loads(message)
+
+            # Ahora sí puedes acceder a 'cliente'
+            broker_topic = f"{message_dict['cliente']}/{topic}" if "cliente" in message_dict else topic
+            wrapped_topic = json.dumps([broker_topic])
 
             broker_topic_bytes = wrapped_topic.encode('utf-8')
             topic_length = len(broker_topic_bytes)
