@@ -144,7 +144,7 @@ class Client:
             message_dict = json.loads(message)
 
             # Ahora sí puedes acceder a 'cliente'
-            broker_topic = f"{message_dict['cliente']}/{topic}" if "cliente" in message_dict else topic
+            broker_topic = f"{message_dict['cliente']}/{topic}" if "cliente" in message_dict else f"{self.client_id}/{topic}"
             wrapped_topic = json.dumps([broker_topic])
 
             broker_topic_bytes = wrapped_topic.encode('utf-8')
