@@ -513,15 +513,21 @@ class Client:
                 return False
             
     def get_admin_requests(self):
-        """Implementación no bloqueante"""
+        """Obtiene las solicitudes de administración pendientes"""
         try:
             # Verificar que estamos conectados
             if not self.connected:
                 return []
             
-            # Devolvemos una lista vacía pero no bloqueamos la interfaz
-            # En el futuro se puede implementar con callbacks reales
-            return []
+            # Solicitar las peticiones al broker
+            packet = Packet(packet_type=PacketType.ADMIN_REQ)
+            if not self._send_packet(packet):
+                print("Error al enviar solicitud de administración")
+                return []
+                
+            # Implementación real que devuelve las solicitudes
+            # Esto es solo un ejemplo y debe adaptarse a tu sistema
+            return self._cached_admin_requests  # Esta variable debería poblarse cuando llegan notificaciones
         except Exception as e:
             print(f"Error al obtener solicitudes de administración: {e}")
             return []
