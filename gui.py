@@ -11,7 +11,6 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 import json
-
 import re
 
 from tinymq import Client, DataAcquisitionService, Database
@@ -53,6 +52,7 @@ class TinyMQGUI:
         self.create_sensors_tab()
         self.create_topics_tab()
         self.create_subscriptions_tab()
+        self.create_admin_tab()
 
         # Barra de estado
         self.status_bar = ttk.Frame(self.root)
@@ -1401,6 +1401,529 @@ class TinyMQGUI:
                 traceback.print_exc()
         
         return callback
+
+    def create_admin_tab(self):
+        """Crea la pestaña de administración de tópicos."""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="Administración")
+
+        # Marco principal con Notebook para diferentes vistas
+        admin_notebook = ttk.Notebook(tab)
+        admin_notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Panel 1: Solicitudes recibidas (como dueño)
+        received_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(received_tab, text="Solicitudes recibidas")
+        
+        # Lista de solicitudes pendientes
+        received_frame = ttk.LabelFrame(received_tab, text="Solicitudes pendientes")
+        received_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.requests_listbox = tk.Listbox(received_frame, width=50, height=6)
+        self.requests_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Botones de acción
+        btn_frame = ttk.Frame(received_frame)
+        btn_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Button(btn_frame, text="Aceptar", command=self.approve_admin_request).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Rechazar", command=self.reject_admin_request).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Refrescar", command=self.refresh_admin_requests).pack(side="left", padx=5)
+        
+        # Panel 2: Tópicos administrados (como administrador)
+        admin_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(admin_tab, text="Tópicos administrados")
+        
+        # Lista de tópicos donde el usuario es administrador
+        admin_topics_frame = ttk.LabelFrame(admin_tab, text="Tópicos donde eres administrador")
+        admin_topics_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.admin_topics_listbox = tk.Listbox(admin_topics_frame, width=50, height=6)
+        self.admin_topics_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+        self.admin_topics_listbox.bind('<<ListboxSelect>>', self.on_admin_topic_selected)
+        
+        # Panel para mostrar y configurar sensores
+        sensor_config_frame = ttk.LabelFrame(admin_tab, text="Configuración de sensores")
+        sensor_config_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.admin_sensors_tree = ttk.Treeview(sensor_config_frame, columns=("sensor", "status"), show="headings")
+        self.admin_sensors_tree.heading("sensor", text="Sensor")
+        self.admin_sensors_tree.heading("status", text="Estado")
+        self.admin_sensors_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        sensor_btns = ttk.Frame(sensor_config_frame)
+        sensor_btns.pack(fill="x", padx=5, pady=5)
+        ttk.Button(sensor_btns, text="Activar", command=lambda: self.set_admin_sensor_status(True)).pack(side="left", padx=5)
+        ttk.Button(sensor_btns, text="Desactivar", command=lambda: self.set_admin_sensor_status(False)).pack(side="left", padx=5)
+        
+        # Panel 3: Solicitar ser administrador
+        request_tab = ttk.Frame(admin_notebook)
+        admin_notebook.add(request_tab, text="Solicitar administración")
+        
+        # Panel para mostrar tópicos suscritos que no sean propios
+        subscribable_frame = ttk.LabelFrame(request_tab, text="Tópicos a los que estás suscrito")
+        subscribable_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.admin_subscribable_topics_listbox = tk.Listbox(subscribable_frame, width=50, height=6)
+        self.admin_subscribable_topics_listbox.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Botones para refrescar y solicitar administración
+        sub_btn_frame = ttk.Frame(subscribable_frame)
+        sub_btn_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Button(sub_btn_frame, text="Refrescar", command=self.refresh_subscribable_topics).pack(side="left", padx=5)
+        ttk.Button(sub_btn_frame, text="Solicitar administración", 
+                command=self.request_admin_for_selected).pack(side="left", padx=5)
+        
+        # Panel para solicitud manual
+        request_frame = ttk.LabelFrame(request_tab, text="Solicitud manual")
+        request_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        form_frame = ttk.Frame(request_frame)
+        form_frame.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Label(form_frame, text="Tópico:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.req_topic_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=self.req_topic_var, width=30).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        
+        ttk.Label(form_frame, text="ID del dueño:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.req_owner_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=self.req_owner_var, width=30).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        
+        ttk.Button(form_frame, text="Enviar solicitud", 
+                command=self.send_admin_request).grid(row=2, column=0, columnspan=2, pady=10)
+        
+        # Actualizar las listas
+        self.refresh_subscribable_topics()
+        self.refresh_admin_requests()
+
+    def refresh_admin_requests(self):
+        """Refresca la lista de solicitudes de administración pendientes."""
+        if not self.client or not self.client.connected:
+            return
+        
+        try:
+            # Obtener solicitudes del servidor
+            requests = self.client.get_admin_requests()
+            
+            self.requests_listbox.delete(0, tk.END)
+            if not requests:
+                self.requests_listbox.insert(tk.END, "No hay solicitudes pendientes")
+            else:
+                for req in requests:
+                    self.requests_listbox.insert(tk.END, 
+                                            f"{req['id']}: {req['requester_id']} solicita {req['topic']}")
+        except Exception as e:
+            self.requests_listbox.delete(0, tk.END)
+            self.requests_listbox.insert(tk.END, "Error al obtener solicitudes")
+            print(f"ERROR: {e}")
+
+    def send_admin_request(self):
+        """Envía una solicitud para ser administrador de un tópico."""
+        topic = self.req_topic_var.get().strip()
+        owner = self.req_owner_var.get().strip()
+        
+        if not topic or not owner:
+            messagebox.showinfo("Error", "Debe especificar tópico y dueño")
+            return
+                
+        if not self.client or not self.client.connected:
+            messagebox.showinfo("Error", "No está conectado al broker")
+            return
+        
+        # Verificar que no soy el dueño
+        my_client_id = self.db.get_client_id()
+        if owner == my_client_id:
+            messagebox.showinfo("Información", "No puedes solicitar administrar tu propio tópico")
+            return
+                
+        success = self.client.request_admin_status(topic, owner)
+        if success:
+            messagebox.showinfo("Éxito", f"Solicitud enviada al dueño {owner}")
+        else:
+            messagebox.showerror("Error", "No se pudo enviar la solicitud")
+
+    def setup_admin_notifications(self):
+        """Configura las notificaciones para administración."""
+        if self.client and self.client.connected:
+            self.client.register_admin_notification_handler(self.on_admin_notification)
+
+    def on_admin_notification(self, notification):
+        """Maneja una notificación administrativa recibida."""
+        notification_type = notification.get("type")
+        
+        if notification_type == "request":
+            # Nueva solicitud de administrador recibida
+            requester_id = notification.get("requester_id", "desconocido")
+            topic_name = notification.get("topic_name", "desconocido")
+            
+            # Mostrar notificación visual
+            self.show_admin_notification(
+                f"Nueva solicitud de administración recibida",
+                f"{requester_id} solicita administrar tu tópico '{topic_name}'"
+            )
+            
+            # Actualizar contador en la pestaña Admin (badge)
+            self._update_admin_tab_badge()
+            
+            # Si estamos en la pestaña de administración, refrescar la lista
+            current_tab = self.notebook.index("current")
+            if self.notebook.tab(current_tab, "text").startswith("Administración"):
+                self.refresh_admin_requests()
+
+    def show_admin_notification(self, title, message):
+        """Muestra una ventana de notificación flotante."""
+        # Crear ventana flotante
+        popup = tk.Toplevel(self.root)
+        popup.title("Notificación")
+        popup.geometry("300x150+50+50")
+        popup.attributes("-topmost", True)
+        
+        # Configurar ventana como modal
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Contenido
+        ttk.Label(popup, text=title, font=("Helvetica", 12, "bold")).pack(pady=(15,5), padx=10)
+        ttk.Label(popup, text=message, wraplength=280).pack(pady=10, padx=10)
+        ttk.Button(popup, text="Ver ahora", command=lambda: self._view_admin_requests(popup)).pack(pady=5)
+        ttk.Button(popup, text="Más tarde", command=popup.destroy).pack(pady=5)
+        
+        # Reproducir sonido (opcional)
+        try:
+            import winsound
+            winsound.MessageBeep()
+        except:
+            pass
+
+    def _view_admin_requests(self, popup=None):
+        """Muestra la pestaña de solicitudes administrativas."""
+        # Cerrar notificación si existe
+        if popup:
+            popup.destroy()
+        
+        # Cambiar a la pestaña de administración
+        for i in range(self.notebook.index("end")):
+            if self.notebook.tab(i, "text").startswith("Administración"):
+                self.notebook.select(i)
+                break
+        
+        # Refrescar las solicitudes
+        self.refresh_admin_requests()
+        
+    def _update_admin_tab_badge(self):
+        """Actualiza el contador de notificaciones en la pestaña de admin."""
+        # Obtener cantidad de solicitudes pendientes
+        count = 0
+        if self.client and self.client.connected:
+            try:
+                requests = self.client.get_admin_requests()
+                count = len(requests)
+            except:
+                pass
+        
+        # Actualizar nombre de la pestaña
+        for i in range(self.notebook.index("end")):
+            tab_text = self.notebook.tab(i, "text") 
+            if tab_text.startswith("Administración"):
+                if count > 0:
+                    self.notebook.tab(i, text=f"Administración ({count})")
+                else:
+                    self.notebook.tab(i, text="Administración")
+                break
+
+    def approve_admin_request(self):
+        """Aprueba la solicitud de administrador seleccionada."""
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+            
+        selection = self.requests_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Selección requerida", "Selecciona una solicitud primero")
+            return
+        
+        selected_item = self.requests_listbox.get(selection[0])
+        match = re.match(r'^(\d+):\s+(\S+)\s+solicita\s+(.+)$', selected_item)
+        if not match:
+            messagebox.showerror("Error", "Formato de solicitud inválido")
+            return
+            
+        request_id = int(match.group(1))
+        requester_id = match.group(2) 
+        topic_name = match.group(3)
+        
+        confirm = messagebox.askyesno(
+            "Confirmar",
+            f"¿Realmente deseas aprobar a {requester_id} como administrador de '{topic_name}'?"
+        )
+        
+        if confirm:
+            success = self.client.respond_to_admin_request(request_id, topic_name, requester_id, True)
+            if success:
+                messagebox.showinfo("Éxito", f"Se ha aprobado a {requester_id} como administrador")
+                self.refresh_admin_requests()
+                self._update_admin_tab_badge()
+            else:
+                messagebox.showerror("Error", "No se pudo aprobar la solicitud")
+
+    def reject_admin_request(self):
+        """Rechaza la solicitud de administrador seleccionada."""
+        # Similar a approve_admin_request pero con approve=False
+        
+    def on_admin_topic_selected(self, event):
+        """Maneja la selección de un tópico administrado."""
+        selection = self.admin_topics_listbox.curselection()
+        if not selection:
+            return
+            
+        # Similar a on_topic_selected pero para tópicos administrados
+        # Llena el TreeView de sensores con sus estados
+
+    def set_admin_sensor_status(self, active):
+        """Activa o desactiva un sensor como administrador."""
+        selection = self.admin_sensors_tree.selection()
+        if not selection:
+            messagebox.showinfo("Selección requerida", "Selecciona un sensor primero")
+            return
+        
+        # Obtener sensor seleccionado
+        item = selection[0]
+        sensor_name = self.admin_sensors_tree.item(item, "values")[0]
+        
+        # Obtener tópico
+        topic_selection = self.admin_topics_listbox.curselection()
+        if not topic_selection:
+            messagebox.showinfo("Selección requerida", "Selecciona un tópico primero")
+            return
+        
+        topic_item = self.admin_topics_listbox.get(topic_selection[0])
+        # Extraer nombre del tópico y dueño
+        
+        # Enviar configuración
+        if self.client and self.client.connected:
+            success = self.client.set_sensor_status(topic_name, sensor_name, active)
+            if success:
+                # Actualizar vista
+                status = "Activo" if active else "Inactivo"
+                self.admin_sensors_tree.item(item, values=(sensor_name, status))
+                messagebox.showinfo("Éxito", f"Sensor {sensor_name} ahora está {status.lower()}")
+            else:
+                messagebox.showerror("Error", "No se pudo cambiar el estado del sensor")
+
+    def request_topic_admin(self):
+        """Solicita ser administrador del tópico seleccionado."""
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Información", "Selecciona un tópico primero")
+            return
+        
+        selected_index = selection[0]
+        selected_item = self.topics_listbox.get(selected_index)
+        topic_id = selected_item.split(":")[0].strip()
+        
+        try:
+            topic = self.db.get_topic(topic_id)
+            if not topic:
+                messagebox.showinfo("Error", "No se pudo obtener información del tópico")
+                return
+                
+            topic_name = topic["name"]
+            owner_id = topic["owner_client_id"]
+            
+            # Verificar que no soy el dueño
+            my_client_id = self.db.get_client_id()
+            if owner_id == my_client_id:
+                messagebox.showinfo("Información", "No puedes solicitar administrar tu propio tópico")
+                return
+            
+            # Confirmar solicitud
+            confirm = messagebox.askyesno(
+                "Confirmar solicitud",
+                f"¿Deseas solicitar ser administrador de '{topic_name}' (dueño: {owner_id})?"
+            )
+            
+            if not confirm:
+                return
+            
+            # Enviar solicitud
+            if self.client and self.client.connected:
+                success = self.client.request_admin_status(topic_name, owner_id)
+                if success:
+                    messagebox.showinfo("Éxito", f"Solicitud enviada al dueño {owner_id}")
+                else:
+                    messagebox.showerror("Error", "No se pudo enviar la solicitud")
+            else:
+                messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al solicitar administración: {str(e)}")
+            
+    def refresh_subscribable_topics(self):
+        """Actualiza la lista de tópicos disponibles para solicitar administración"""
+        try:
+            # Limpiar la lista primero
+            self.admin_subscribable_topics_listbox.delete(0, tk.END)
+            
+            # Obtener las suscripciones del usuario
+            subscriptions = self.db.get_subscriptions()
+            
+            # Mostrar mensaje si no hay suscripciones
+            if not subscriptions:
+                self.admin_subscribable_topics_listbox.insert(tk.END, "No hay suscripciones activas")
+                return
+                    
+            # Obtener mi ID de cliente
+            my_client_id = self.db.get_client_id()
+            if not my_client_id:
+                self.admin_subscribable_topics_listbox.insert(tk.END, "Error: ID de cliente no configurado")
+                return
+            
+            # Debug para verificar valores
+            print(f"ID de cliente: {my_client_id}")
+            print(f"Suscripciones encontradas: {len(subscriptions)}")
+            for sub in subscriptions:
+                print(f"- Suscripción: {sub}")
+                
+            # Para cada suscripción, verificar si el usuario es dueño del tópico
+            found_topics = False
+            for sub in subscriptions:
+                topic = sub.get('topic')
+                owner_id = sub.get('source_client_id')
+                
+                if not topic or not owner_id:
+                    continue
+                    
+                # Añadir todos los tópicos a los que estamos suscritos
+                # - No necesitamos filtrar por dueño ya que eso se verificará al solicitar
+                self.admin_subscribable_topics_listbox.insert(tk.END, f"{topic} ({owner_id})")
+                found_topics = True
+                        
+            if not found_topics:
+                self.admin_subscribable_topics_listbox.insert(tk.END, "No hay tópicos disponibles para solicitar administración")
+                    
+        except Exception as e:
+            self.admin_subscribable_topics_listbox.delete(0, tk.END)
+            self.admin_subscribable_topics_listbox.insert(tk.END, f"Error: {str(e)}")
+            print(f"Error al actualizar tópicos disponibles para administración: {e}")
+            import traceback
+            traceback.print_exc()
+        
+    def request_admin_for_selected(self):
+        """Solicita administración para el tópico seleccionado en la lista"""
+        selection = self.admin_subscribable_topics_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Selección requerida", "Selecciona un tópico primero")
+            return
+        
+        selected_item = self.admin_subscribable_topics_listbox.get(selection[0])
+        # Formato esperado: "topic (owner_id)"
+        match = re.match(r'^(.+)\s+\((.+)\)$', selected_item)
+        if not match:
+            messagebox.showerror("Error", "Formato de tópico inválido")
+            return
+            
+        topic_name = match.group(1)
+        owner_id = match.group(2)
+        
+        # Verificar que no soy el dueño
+        my_client_id = self.db.get_client_id()
+        if owner_id == my_client_id:
+            messagebox.showinfo("Información", "No puedes solicitar administrar tu propio tópico")
+            return
+            
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+            
+        confirm = messagebox.askyesno(
+            "Confirmar solicitud",
+            f"¿Deseas solicitar ser administrador de '{topic_name}' (dueño: {owner_id})?"
+        )
+        
+        if confirm:
+            try:
+                success = self.client.request_admin_status(topic_name, owner_id)
+                if success:
+                    messagebox.showinfo("Éxito", f"Solicitud enviada al dueño {owner_id}")
+                else:
+                    messagebox.showerror("Error", "No se pudo enviar la solicitud")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al enviar solicitud: {str(e)}")
+
+    def approve_admin_request(self):
+        """Aprueba la solicitud de administrador seleccionada."""
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+                
+        selection = self.requests_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Selección requerida", "Selecciona una solicitud primero")
+            return
+            
+        selected_item = self.requests_listbox.get(selection[0])
+        match = re.match(r'^(\d+):\s+(\S+)\s+solicita\s+(.+)$', selected_item)
+        if not match:
+            messagebox.showerror("Error", "Formato de solicitud inválido")
+            return
+                
+        request_id = int(match.group(1))
+        requester_id = match.group(2) 
+        topic_name = match.group(3)
+            
+        confirm = messagebox.askyesno(
+            "Confirmar",
+            f"¿Realmente deseas aprobar a {requester_id} como administrador de '{topic_name}'?"
+        )
+            
+        if confirm:
+            try:
+                success = self.client.respond_to_admin_request(request_id, topic_name, requester_id, True)
+                if success:
+                    messagebox.showinfo("Éxito", f"Se ha aprobado a {requester_id} como administrador")
+                    self.refresh_admin_requests()
+                    self._update_admin_tab_badge()
+                else:
+                    messagebox.showerror("Error", "No se pudo aprobar la solicitud")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al aprobar solicitud: {str(e)}")
+
+    def reject_admin_request(self):
+        """Rechaza la solicitud de administrador seleccionada."""
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+                
+        selection = self.requests_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("Selección requerida", "Selecciona una solicitud primero")
+            return
+            
+        selected_item = self.requests_listbox.get(selection[0])
+        match = re.match(r'^(\d+):\s+(\S+)\s+solicita\s+(.+)$', selected_item)
+        if not match:
+            messagebox.showerror("Error", "Formato de solicitud inválido")
+            return
+                
+        request_id = int(match.group(1))
+        requester_id = match.group(2) 
+        topic_name = match.group(3)
+            
+        confirm = messagebox.askyesno(
+            "Confirmar",
+            f"¿Realmente deseas rechazar la solicitud de {requester_id} para administrar '{topic_name}'?"
+        )
+            
+        if confirm:
+            try:
+                success = self.client.respond_to_admin_request(request_id, topic_name, requester_id, False)
+                if success:
+                    messagebox.showinfo("Éxito", f"Se ha rechazado la solicitud de {requester_id}")
+                    self.refresh_admin_requests()
+                    self._update_admin_tab_badge()
+                else:
+                    messagebox.showerror("Error", "No se pudo rechazar la solicitud")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al rechazar solicitud: {str(e)}")
 
 def main():
     root = tk.Tk()

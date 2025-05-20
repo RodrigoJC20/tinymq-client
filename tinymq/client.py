@@ -353,7 +353,6 @@ class Client:
             except Exception as e:
                 print(f"[ERROR] Error general al manejar PUB packet: {e}")
 
-
     def get_published_topics(self) -> List[Dict[str, str]]:
         """
         Obtiene una lista de tópicos publicados desde el broker.
@@ -455,4 +454,146 @@ class Client:
             return result
         except Exception as e:
             print(f"Error al cambiar estado de publicación: {e}")
+            return False
+        
+    def request_admin_status(self, topic_name: str, owner_id: str) -> bool:
+        """
+        Solicita ser administrador de un tópico.
+        
+        Args:
+            topic_name: Nombre del tópico
+            owner_id: ID del cliente dueño del tópico
+            
+        Returns:
+            True si la solicitud se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje especial para solicitud de administrador
+            request_message = json.dumps({
+                "__admin_request": True,
+                "client_id": self.client_id,
+                "topic_name": topic_name,
+                "owner_id": owner_id,
+                "timestamp": int(time.time())
+            })
+            
+            # El tópico para enviar la solicitud es uno especial
+            admin_topic = f"{owner_id}/admin"
+            
+            # Publicar mensaje
+            result = self.publish(admin_topic, request_message)
+            return result
+        except Exception as e:
+            print(f"Error al solicitar estado de administrador: {e}")
+            return False
+
+    def register_admin_notification_handler(self, callback):
+            """Registra un handler para recibir notificaciones de administración"""
+            if not self.connected:
+                return False
+                
+            try:
+                # Suscribirse al tópico especial para notificaciones administrativas
+                notification_topic = f"{self.client_id}/admin_notifications"
+                
+                def notification_handler(topic_str, message):
+                    try:
+                        data = json.loads(message)
+                        if "__admin_notification" in data:
+                            callback(data)
+                    except Exception as e:
+                        print(f"Error procesando notificación: {e}")
+                
+                return self.subscribe(notification_topic, notification_handler)
+            except Exception as e:
+                print(f"Error registrando handler de notificaciones: {e}")
+                return False
+            
+    def get_admin_requests(self):
+        """Implementación no bloqueante"""
+        try:
+            # Verificar que estamos conectados
+            if not self.connected:
+                return []
+            
+            # Devolvemos una lista vacía pero no bloqueamos la interfaz
+            # En el futuro se puede implementar con callbacks reales
+            return []
+        except Exception as e:
+            print(f"Error al obtener solicitudes de administración: {e}")
+            return []
+        
+    def respond_to_admin_request(self, request_id, topic_name, requester_id, approve):
+        """
+        Responde a una solicitud de administración.
+        
+        Args:
+            request_id: ID de la solicitud
+            topic_name: Nombre del tópico
+            requester_id: ID del cliente solicitante
+            approve: True para aprobar, False para rechazar
+            
+        Returns:
+            True si se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje de respuesta
+            response = json.dumps({
+                "__admin_response": True,
+                "client_id": self.client_id,
+                "request_id": request_id,
+                "topic_name": topic_name,
+                "requester_id": requester_id,
+                "approved": approve,
+                "timestamp": int(time.time())
+            })
+            
+            # Enviar a tópico especial 
+            response_topic = f"system/admin/responses"
+            
+            # Publicar respuesta
+            return self.publish(response_topic, response)
+        except Exception as e:
+            print(f"Error respondiendo a solicitud: {e}")
+            return False
+        
+    def set_sensor_status(self, topic_name, sensor_name, active):
+        """
+        Configura el estado de un sensor como administrador.
+        
+        Args:
+            topic_name: Nombre del tópico
+            sensor_name: Nombre del sensor
+            active: True para activar, False para desactivar
+            
+        Returns:
+            True si se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje de configuración
+            config = json.dumps({
+                "__admin_sensor_config": True,
+                "client_id": self.client_id,
+                "topic_name": topic_name,
+                "sensor_name": sensor_name, 
+                "active": active,
+                "timestamp": int(time.time())
+            })
+            
+            # Tópico para configuración
+            config_topic = f"system/admin/config"
+            
+            # Publicar configuración
+            return self.publish(config_topic, config)
+        except Exception as e:
+            print(f"Error configurando sensor: {e}")
             return False
