@@ -421,8 +421,7 @@ class TinyMQGUI:
             self.public_topics_combo.bind("<ButtonPress-1>", lambda e: self.refresh_public_topics())
             ttk.Button(public_topics_frame, text="Suscribirse", command=self.subscribe_to_public_topic).pack(fill="x", padx=5, pady=5)
 
-
-        # Detalles y acciones
+            # Detalles y acciones
             right = ttk.LabelFrame(main_frame, text="Detalles")
             right.pack(side="left", fill="both", expand=True)
             controls = ttk.Frame(right)
@@ -438,16 +437,66 @@ class TinyMQGUI:
             self.sub_client_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_client_var)
             self.sub_client_entry.pack(side="left", padx=5)
                         
-           
-
             # Datos de suscripción
             data_frame = ttk.LabelFrame(right, text="Datos Recibidos")
             data_frame.pack(fill="both", expand=True, padx=10, pady=5)
             self.sub_data_text = scrolledtext.ScrolledText(data_frame, height=8)
             self.sub_data_text.pack(fill="both", expand=True, padx=5, pady=5)
             self.sub_data_text.config(state="disabled")
+            # Botón para limpiar el texto de datos recibidos
             ttk.Button(data_frame, text="Limpiar", command=self.clear_sub_data).pack(pady=5)
 
+            # NUEVO: Cuadro para escribir mensajes manuales
+            message_frame = ttk.LabelFrame(right, text="Enviar Mensaje")
+            message_frame.pack(fill="x", padx=10, pady=5)
+
+            self.message_entry = ttk.Entry(message_frame)
+            self.message_entry.pack(fill="x", padx=5, pady=5)
+
+            # Botones de acción
+            message_buttons = ttk.Frame(message_frame)
+            message_buttons.pack(fill="x", padx=5, pady=(0, 5))
+
+            ttk.Button(message_buttons, text="Enviar", command=self.send_message_placeholder).pack(side="left", expand=True, fill="x", padx=2)
+            ttk.Button(message_buttons, text="Limpiar Entrada", command=lambda: self.message_entry.delete(0, tk.END)).pack(side="left", expand=True, fill="x", padx=2)
+
+    def send_message_placeholder(self):
+        topic_name = self.sub_topic_var.get().strip()
+        client_id = self.sub_client_var.get().strip()
+        message_text = self.message_entry.get().strip()
+
+        print(f"[MSG'{topic_name} {client_id} { message_text}'")
+
+        # Validar campos vacíos
+        if not topic_name or not client_id:
+            messagebox.showwarning("Faltan datos", "Por favor selecciona un tópico y un cliente origen.")
+            return
+
+        if not message_text:
+            messagebox.showwarning("Mensaje vacío", "Escribe un mensaje antes de enviarlo.")
+            return
+
+        # Verificar si el cliente está conectado
+        if not self.client or not self.client.connected:
+            messagebox.showerror("Error de conexión", "El cliente no está conectado.")
+            return
+
+        try:
+            message = {
+                "cliente": client_id,
+                "intruccion": message_text,
+                "timestamp": time.time(),
+            }
+            json_message = json.dumps(message)
+            result = self.client.publish(topic_name, json_message)
+            if not result:
+                messagebox.showerror("Error", f"No se pudo publicar en el tópico {topic_name}.")
+            else:
+                messagebox.showinfo("Éxito", f"Mensaje enviado a {topic_name}.")
+                self.message_entry.delete(0, tk.END) 
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al publicar el mensaje: {e}")
+        
     def refresh_subscriptions(self):
         try:
             subscriptions = self.db.get_subscriptions()

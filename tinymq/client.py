@@ -238,7 +238,6 @@ class Client:
                 if not data:
                     # Connection closed
                     break
-
                 # Append to buffer
                 with self._recv_lock:
                     self._recv_buffer.extend(data)
@@ -303,47 +302,57 @@ class Client:
             
         elif packet.packet_type == PacketType.PUB:
             try:
-                # Intentar primero como JSON tradicional
-                print(f"DEBUG: Procesando PUB - raw payload: {packet.payload[:100]!r}")
-                
-                raw = packet.payload
-                # Analizar el formato del paquete PUB: [topic_length(1) + topic_bytes + message_bytes]
+                data = json.loads(packet.payload.decode('utf-8'))
+                topic_raw = data.get("topic")
+
+                # Aquí convertimos topic_raw de JSON para que sea lista o string limpio
                 try:
-                    if len(raw) > 0:
-                        topic_len = raw[0]
-                        if len(raw) >= topic_len + 1:
-                            topic_bytes = raw[1:1 + topic_len]
-                            topic_raw = topic_bytes.decode('utf-8')
-                            
-                            try:
-                                # El tópico puede estar en formato JSON ["client_id/topic"]
-                                import json
-                                topic = json.loads(topic_raw)[0]
-                                print(f"DEBUG: Tópico JSON decodificado: {topic}")
-                            except Exception:
-                                # O como texto plano
-                                topic = topic_raw.strip('"')
-                                print(f"DEBUG: Tópico texto plano: {topic}")
+                    topic_parsed = json.loads(topic_raw)
+                except Exception:
+                    topic_parsed = topic_raw
+                # Si es lista, extraemos el primer elemento (string)
+                if isinstance(topic_parsed, list):
+                    topic = topic_parsed[0]
+                else:
+                    topic = topic_parsed
+                message = data.get("message", "")
 
-                            msg_bytes = raw[1 + topic_len:]
-                            message = msg_bytes.decode('utf-8')
-                            print(f"DEBUG: Mensaje decodificado ({len(message)} bytes): {message[:100]}...")
+                if topic and topic in self.topic_handlers:
+                    print(f"[DEBUG] Handler JSON para tópico '{topic}'")
+                    self.topic_handlers[topic](topic, message)
 
-                            # Ejecutar el callback
-                            if topic in self.topic_handlers:
-                                print(f"DEBUG: Llamando al handler para tópico '{topic}'")
-                                self.topic_handlers[topic](topic, message)
-                            else:
-                                print(f"DEBUG: No hay handler registrado para tópico '{topic}', handlers disponibles: {list(self.topic_handlers.keys())}")
+
+
+            except json.JSONDecodeError:
+                raw = packet.payload
+
+                try:
+                    topic_len = raw[0]
+                    topic_bytes = raw[1:1 + topic_len]
+                    topic_raw = topic_bytes.decode('utf-8')
+
+                    try:
+                        topic = json.loads(topic_raw)[0] 
+                    except Exception:
+                        topic = topic_raw.strip('"') 
+
+                    msg_bytes = raw[1 + topic_len:]
+                    message = msg_bytes.decode('utf-8')
+
+                    if topic in self.topic_handlers:
+                        self.topic_handlers[topic](topic, message)
+                    else:
+                        print(f"[WARN] No hay handler registrado para tópico '{topic}'")
+                except Exception as e2:
+                    print(f"[ERROR] Falló el parseo personalizado del paquete PUB: {e2}")
+
                 except Exception as e:
-                    print(f"ERROR: Falló el parseo del paquete PUB: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"[ERROR] Fallo en formato personalizado: {e}")
+                    print(f"[ERROR] Payload completo: {raw!r}")
 
             except Exception as e:
-                print(f"ERROR general en PUB: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[ERROR] Error general al manejar PUB packet: {e}")
+
 
     def get_published_topics(self) -> List[Dict[str, str]]:
         """
