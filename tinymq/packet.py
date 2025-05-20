@@ -19,7 +19,8 @@ class PacketType(enum.IntEnum):
     UNSUBACK = 0x08  # Unsubscribe acknowledgement
     TOPIC_REQ = 0x09  # Request published topics
     TOPIC_RESP = 0x0A # Response with published topics
-
+    ADMIN_REQ = 0x0B  # Admin request
+    ADMIN_RESP = 0x0C # Admin response
 class Packet:
     HEADER_SIZE = 4  # 1 byte type + 1 byte flags + 2 bytes payload length
 

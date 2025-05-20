@@ -24,6 +24,9 @@ class Client:
             host: Broker hostname or IP address
             port: Broker port
         """
+        
+        self._recv_lock = threading.Lock()
+        self._cached_admin_requests = []  # Inicializar la variable
         self.client_id = client_id
         self.host = host
         self.port = port
@@ -321,8 +324,6 @@ class Client:
                     print(f"[DEBUG] Handler JSON para tópico '{topic}'")
                     self.topic_handlers[topic](topic, message)
 
-
-
             except json.JSONDecodeError:
                 raw = packet.payload
 
@@ -352,6 +353,23 @@ class Client:
 
             except Exception as e:
                 print(f"[ERROR] Error general al manejar PUB packet: {e}")
+
+        # Añadir el manejador para ADMIN_RESP
+        elif packet.packet_type == PacketType.ADMIN_RESP:
+            try:
+                data = json.loads(packet.payload.decode('utf-8'))
+                self._cached_admin_requests = data
+                print(f"[INFO] Recibidas {len(data)} solicitudes administrativas")
+                # Opcionalmente, puedes notificar a la interfaz gráfica que hay nuevas solicitudes
+                # si tienes algún tipo de mecanismo de callback configurado
+            except Exception as e:
+                print(f"[ERROR] Error procesando respuesta administrativa: {e}")
+
+        # Añadir el manejador para TOPIC_RESP
+        elif packet.packet_type == PacketType.TOPIC_RESP:
+            print(f"[DEBUG] Recibido paquete TOPIC_RESP estándar")
+            # Este caso debería ser manejado por _register_temp_packet_handler
+            # pero se añade aquí para completitud
 
     def get_published_topics(self) -> List[Dict[str, str]]:
         """
@@ -481,7 +499,7 @@ class Client:
             })
             
             # El tópico para enviar la solicitud es uno especial
-            admin_topic = f"{owner_id}/admin"
+            admin_topic = f"{owner_id}/admin"  # Mantener esta estructura
             
             # Publicar mensaje
             result = self.publish(admin_topic, request_message)
@@ -497,7 +515,8 @@ class Client:
                 
             try:
                 # Suscribirse al tópico especial para notificaciones administrativas
-                notification_topic = f"{self.client_id}/admin_notifications"
+                notification_topic = f"{self.client_id}/admin"  # Cambiar a esta estructura
+
                 
                 def notification_handler(topic_str, message):
                     try:
