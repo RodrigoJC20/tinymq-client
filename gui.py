@@ -361,8 +361,12 @@ class TinyMQGUI:
                 self.db.create_topic(name, publish)
                 messagebox.showinfo("Éxito", f"Tópico '{name}' creado correctamente", parent=dialog)
                 self.refresh_topics()
-                self.refresh_public_topics()  # Añadir esta línea para actualizar tópicos públicos
+                self.refresh_public_topics()
                 dialog.destroy()
+                
+                # Añadir reconexión automática si el tópico se marcó para publicación
+                if publish:
+                    self.reconnect_to_broker()
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo crear el tópico: {str(e)}", parent=dialog)
 
@@ -370,64 +374,64 @@ class TinyMQGUI:
         btn_frame.pack(pady=8)
         ttk.Button(btn_frame, text="Crear", command=on_create).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Cancelar", command=dialog.destroy).pack(side="left", padx=5)
-
+    
     def create_subscriptions_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Suscripciones")
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text="Suscripciones")
 
-        main_frame = ttk.Frame(tab)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+            main_frame = ttk.Frame(tab)
+            main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Lista de suscripciones
-        left = ttk.LabelFrame(main_frame, text="Suscripciones Activas")
-        left.pack(side="left", fill="y", padx=(0, 10))
-        self.subscriptions_listbox = tk.Listbox(left, width=35)
-        self.subscriptions_listbox.pack(fill="y", expand=True, padx=5, pady=5)
-        self.subscriptions_listbox.bind('<<ListboxSelect>>', self.on_subscription_selected)
-        
-        # Botones para gestionar suscripciones
-        buttons_frame = ttk.Frame(left)
-        buttons_frame.pack(fill="x", padx=5, pady=5)
-        ttk.Button(buttons_frame, text="Refrescar", command=self.refresh_subscriptions).pack(side="left", expand=True, fill="x", padx=2)
-        ttk.Button(buttons_frame, text="Desuscribirse", command=self.unsubscribe_from_topic).pack(side="left", expand=True, fill="x", padx=2)
+            # Lista de suscripciones
+            left = ttk.LabelFrame(main_frame, text="Suscripciones Activas")
+            left.pack(side="left", fill="y", padx=(0, 10))
+            self.subscriptions_listbox = tk.Listbox(left, width=35)
+            self.subscriptions_listbox.pack(fill="y", expand=True, padx=5, pady=5)
+            self.subscriptions_listbox.bind('<<ListboxSelect>>', self.on_subscription_selected)
+            
+            # Botones para gestionar suscripciones
+            buttons_frame = ttk.Frame(left)
+            buttons_frame.pack(fill="x", padx=5, pady=5)
+            ttk.Button(buttons_frame, text="Refrescar", command=self.refresh_subscriptions).pack(side="left", expand=True, fill="x", padx=2)
+            ttk.Button(buttons_frame, text="Desuscribirse", command=self.unsubscribe_from_topic).pack(side="left", expand=True, fill="x", padx=2)
 
-        # NUEVO: Lista de tópicos públicos para suscribirse
-        public_topics_frame = ttk.LabelFrame(left, text="Tópicos Públicos Disponibles")
-        public_topics_frame.pack(fill="x", padx=5, pady=10)
-        self.public_topics_combo = ttk.Combobox(public_topics_frame, state="readonly")
-        self.public_topics_combo.pack(fill="x", padx=5, pady=5)
-        # Vincular evento de clic para refrescar la lista de tópicos públicos
-        self.public_topics_combo.bind("<ButtonPress-1>", lambda e: self.refresh_public_topics())
-        ttk.Button(public_topics_frame, text="Suscribirse", command=self.subscribe_to_public_topic).pack(fill="x", padx=5, pady=5)
+            # NUEVO: Lista de tópicos públicos para suscribirse
+            public_topics_frame = ttk.LabelFrame(left, text="Tópicos Públicos Disponibles")
+            public_topics_frame.pack(fill="x", padx=5, pady=10)
+            self.public_topics_combo = ttk.Combobox(public_topics_frame, state="readonly")
+            self.public_topics_combo.pack(fill="x", padx=5, pady=5)
+            # Vincular evento de clic para refrescar la lista de tópicos públicos
+            self.public_topics_combo.bind("<ButtonPress-1>", lambda e: self.refresh_public_topics())
+            ttk.Button(public_topics_frame, text="Suscribirse", command=self.subscribe_to_public_topic).pack(fill="x", padx=5, pady=5)
 
 
-       # Detalles y acciones
-        right = ttk.LabelFrame(main_frame, text="Detalles")
-        right.pack(side="left", fill="both", expand=True)
-        controls = ttk.Frame(right)
-        controls.pack(fill="x", padx=10, pady=10)
-        
-        ttk.Label(controls, text="Tópico:").pack(side="left", padx=5)
-        # Crear StringVar para los campos
-        self.sub_topic_var = tk.StringVar()
-        self.sub_topic_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_topic_var)
-        self.sub_topic_entry.pack(side="left", padx=5)
-        
-        ttk.Label(controls, text="Cliente Origen:").pack(side="left", padx=5)
-        self.sub_client_var = tk.StringVar()
-        self.sub_client_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_client_var)
-        self.sub_client_entry.pack(side="left", padx=5)
-        
-        ttk.Button(controls, text="Suscribirse", command=self.subscribe_to_topic).pack(side="left", padx=5)
-        ttk.Button(controls, text="Cancelar Suscripción", command=self.unsubscribe_from_topic).pack(side="left", padx=5)
+        # Detalles y acciones
+            right = ttk.LabelFrame(main_frame, text="Detalles")
+            right.pack(side="left", fill="both", expand=True)
+            controls = ttk.Frame(right)
+            controls.pack(fill="x", padx=10, pady=10)
+            
+            ttk.Label(controls, text="Tópico:").pack(side="left", padx=5)
+            # Crear StringVar para los campos
+            self.sub_topic_var = tk.StringVar()
+            self.sub_topic_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_topic_var)
+            self.sub_topic_entry.pack(side="left", padx=5)
+            
+            ttk.Label(controls, text="Cliente Origen:").pack(side="left", padx=5)
+            self.sub_client_var = tk.StringVar()
+            self.sub_client_entry = ttk.Entry(controls, state="normal", textvariable=self.sub_client_var)
+            self.sub_client_entry.pack(side="left", padx=5)
+            
+            ttk.Button(controls, text="Suscribirse", command=self.subscribe_to_topic).pack(side="left", padx=5)
+            ttk.Button(controls, text="Cancelar Suscripción", command=self.unsubscribe_from_topic).pack(side="left", padx=5)
 
-        # Datos de suscripción
-        data_frame = ttk.LabelFrame(right, text="Datos Recibidos")
-        data_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        self.sub_data_text = scrolledtext.ScrolledText(data_frame, height=8)
-        self.sub_data_text.pack(fill="both", expand=True, padx=5, pady=5)
-        self.sub_data_text.config(state="disabled")
-        ttk.Button(data_frame, text="Limpiar", command=self.clear_sub_data).pack(pady=5)
+            # Datos de suscripción
+            data_frame = ttk.LabelFrame(right, text="Datos Recibidos")
+            data_frame.pack(fill="both", expand=True, padx=10, pady=5)
+            self.sub_data_text = scrolledtext.ScrolledText(data_frame, height=8)
+            self.sub_data_text.pack(fill="both", expand=True, padx=5, pady=5)
+            self.sub_data_text.config(state="disabled")
+            ttk.Button(data_frame, text="Limpiar", command=self.clear_sub_data).pack(pady=5)
 
     def refresh_subscriptions(self):
         try:
@@ -451,6 +455,100 @@ class TinyMQGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar tópicos públicos: {str(e)}")
 
+    def reconnect_to_broker(self):
+        """Función auxiliar para reconectar al broker después de cambios en tópicos."""
+        self.status_label.config(text="Reconectando automáticamente...")
+        
+        # Guardar datos de conexión actuales
+        host = self.host_entry.get().strip() if hasattr(self, "host_entry") else "10.103.151.147"
+        try:
+            port = int(self.port_entry.get().strip()) if hasattr(self, "port_entry") else 1505
+        except ValueError:
+            port = 1505
+        
+        # Desconectar
+        if self.client and self.client.connected:
+            try:
+                self.client.disconnect()
+                self.status_var.set("Desconectado")
+                self.connect_btn.config(state="normal")
+                self.disconnect_btn.config(state="disabled")
+            except Exception as e:
+                print(f"Error al desconectar: {e}")
+        
+        # LÍNEA NUEVA: reiniciar los callbacks de DAS
+        if self.das:
+            # Guardar el callback original de sensor data
+            original_sensor_callback = None
+            for callback in self.das.on_data_received_callbacks:
+                if callback.__name__ == self.on_sensor_data.__name__:
+                    original_sensor_callback = callback
+                    break
+                    
+            # Limpiar todos los callbacks
+            self.das.on_data_received_callbacks = []
+            
+            # Restaurar el callback original de sensor data
+            if original_sensor_callback:
+                self.das.add_data_callback(original_sensor_callback)
+            else:
+                # Si no se encontró el original, agregar uno nuevo
+                self.das.add_data_callback(self.on_sensor_data)
+        
+        # Pequeña pausa para asegurar que la conexión se cerró correctamente
+        self.root.after(500, lambda: self._complete_reconnection(host, port))
+        
+    def _complete_reconnection(self, host, port):
+        """Completa el proceso de reconexión."""
+        client_id = self.db.get_client_id()
+        if not client_id:
+            messagebox.showerror("Error", "ID de cliente no establecido")
+            return
+        
+        try:
+            self.client = Client(client_id, host, port)
+            if self.client.connect():
+                self.status_var.set(f"Conectado (ID: {client_id})")
+                self.connect_btn.config(state="disabled")
+                self.disconnect_btn.config(state="normal")
+                self.status_label.config(text=f"Reconectado exitosamente a {host}:{port}")
+
+                # Iniciar publicación en los tópicos marcados como publicadores
+                published_topics = self.db.get_published_topics()
+                for topic_info in published_topics:
+                    self._setup_topic_publishing(topic_info["name"])
+
+                # Re-suscribirse a todos los tópicos guardados
+                subscriptions = self.db.get_subscriptions()
+                for sub in subscriptions:
+                    topic = sub["topic"]
+                    source_client = sub["source_client_id"]
+
+                    _topic = topic
+                    _source_client = source_client
+
+                    def subscription_callback(topic_str, message, _topic=_topic, _source_client=_source_client):
+                        try:
+                            message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
+                            timestamp = int(time.time())
+                            self.db.add_subscription_data(_topic, _source_client, timestamp, message_str)
+                            self.add_realtime_message("Recibido", f"Tópico: {_topic} ({_source_client})\nMensaje: {message_str}")
+                        except Exception as e:
+                            print(f"ERROR en callback: {e}")
+
+                    broker_topic = topic if "/" in topic else f"{source_client}/{topic}"
+                    print(f"[INFO] Re-suscribiéndose a tópico del broker: {broker_topic}")
+                    success = self.client.subscribe(broker_topic, subscription_callback)
+
+                    if success:
+                        print(f"[SUCCESS] Suscrito exitosamente a '{broker_topic}'")
+                    else:
+                        print(f"[WARN] No se pudo suscribir a '{broker_topic}'")
+            else:
+                messagebox.showerror("Error", "No se pudo reconectar al broker")
+        except Exception as e:
+            messagebox.showerror("Error de reconexión", str(e))
+        
     def subscribe_to_public_topic(self):
         topic_name = self.public_topics_combo.get()
         if not topic_name:
@@ -713,6 +811,11 @@ class TinyMQGUI:
         selected_index = selection[0]
         selected_item = self.sensors_listbox.get(selected_index)
         sensor_id = selected_item.split(":")[0].strip()
+        
+        # Si se estaba monitoreando otro sensor, limpiar el área de tiempo real
+        if self.realtime_active_var.get():
+            self.clear_realtime_data()
+        
         try:
             sensor = self.db.get_sensor(sensor_id)
             if not sensor:
@@ -723,6 +826,12 @@ class TinyMQGUI:
             timestamp = datetime.fromtimestamp(sensor["last_updated"]).strftime("%Y-%m-%d %H:%M:%S")
             self.sensor_updated_var.set(timestamp)
             self.load_sensor_history()
+            
+            # Si estaba activo el monitoreo, mostrar mensaje informativo
+            if self.realtime_active_var.get():
+                self.realtime_text.config(state="normal")
+                self.realtime_text.insert(tk.END, f"Monitoreo en tiempo real activado para sensor: {sensor['name']}\nEsperando datos...\n\n")
+                self.realtime_text.config(state="disabled")
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar detalles del sensor: {str(e)}")
 
@@ -849,6 +958,9 @@ class TinyMQGUI:
             # Mostrar mensaje de éxito
             state = "activada" if publish else "desactivada"
             messagebox.showinfo("Éxito", f"Publicación {state} para {success_count} tópico(s)")
+            
+            # Añadir esta línea al final del bloque para reconectar automáticamente
+            self.reconnect_to_broker()
 
     def add_sensor_to_topic(self):
         selection = self.topics_listbox.curselection()
@@ -889,7 +1001,9 @@ class TinyMQGUI:
         if success_count > 0:
             messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' añadido a {success_count} tópico(s)")
             self.on_topic_selected(None)
-
+            # Añadir la reconexión automática
+            self.reconnect_to_broker()
+            
     def remove_sensor_from_topic(self):
         selection = self.topics_listbox.curselection()
         if not selection:
@@ -940,7 +1054,11 @@ class TinyMQGUI:
             messagebox.showinfo("Resultado", message)
         
         self.on_topic_selected(None)
-    
+        
+        # Añadir la reconexión si hubo éxito
+        if success_count > 0:
+            self.reconnect_to_broker()
+        
     def refresh_subscriptions(self):
         try:
             subscriptions = self.db.get_subscriptions()
