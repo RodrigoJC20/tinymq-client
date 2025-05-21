@@ -391,81 +391,202 @@ class TinyMQGUI:
                     self.reconnect_to_broker()
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo crear el tópico: {str(e)}", parent=dialog)
-        
+                
     def create_subscriptions_tab(self):
-            tab = ttk.Frame(self.notebook)
-            self.notebook.add(tab, text="Suscripciones")
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="Suscripciones")
 
-            main_frame = ttk.Frame(tab)
-            main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        main_frame = ttk.Frame(tab)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-            # Lista de suscripciones
-            left = ttk.LabelFrame(main_frame, text="Suscripciones Activas")
-            left.pack(side="left", fill="y", padx=(0, 10))
-            self.subscriptions_listbox = tk.Listbox(left, width=35)
-            self.subscriptions_listbox.pack(fill="y", expand=True, padx=5, pady=5)
-            self.subscriptions_listbox.bind('<<ListboxSelect>>', self.on_subscription_selected)
+        # Lista de suscripciones
+        left = ttk.LabelFrame(main_frame, text="Suscripciones Activas")
+        left.pack(side="left", fill="y", padx=(0, 10))
+        self.subscriptions_listbox = tk.Listbox(left, width=35)
+        self.subscriptions_listbox.pack(fill="y", expand=True, padx=5, pady=5)
+        self.subscriptions_listbox.bind('<<ListboxSelect>>', self.on_subscription_selected)
+        
+        # Botones para gestionar suscripciones
+        buttons_frame = ttk.Frame(left)
+        buttons_frame.pack(fill="x", padx=5, pady=5)
+        ttk.Button(buttons_frame, text="Refrescar", command=self.refresh_subscriptions).pack(side="left", expand=True, fill="x", padx=2)
+        ttk.Button(buttons_frame, text="Desuscribirse", command=self.unsubscribe_from_topic).pack(side="left", expand=True, fill="x", padx=2)
+
+        # NUEVO: Lista de tópicos públicos para suscribirse
+        public_topics_frame = ttk.LabelFrame(left, text="Tópicos Públicos Disponibles")
+        public_topics_frame.pack(fill="x", padx=5, pady=10)
+        self.public_topics_combo = ttk.Combobox(public_topics_frame, state="readonly")
+        self.public_topics_combo.pack(fill="x", padx=5, pady=5)
+        # Vincular evento de clic para refrescar la lista de tópicos públicos
+        self.public_topics_combo.bind("<ButtonPress-1>", lambda e: self.refresh_public_topics())
+        ttk.Button(public_topics_frame, text="Suscribirse", command=self.subscribe_to_public_topic).pack(fill="x", padx=5, pady=5)
+
+        # Detalles y acciones
+        right = ttk.LabelFrame(main_frame, text="Detalles")
+        right.pack(side="left", fill="both", expand=True)
+        controls = ttk.Frame(right)
+        controls.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Label(controls, text="Tópico:").pack(side="left", padx=5)
+        self.sub_topic_var = tk.StringVar()
+        self.sub_topic_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_topic_var)
+        self.sub_topic_entry.pack(side="left", padx=5)
+
+        ttk.Label(controls, text="Cliente Origen:").pack(side="left", padx=5)
+        self.sub_client_var = tk.StringVar()
+        self.sub_client_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_client_var)
+        self.sub_client_entry.pack(side="left", padx=5)
+                    
+        # Datos de suscripción - MEJORAS VISUALES AQUÍ
+        data_frame = ttk.LabelFrame(right, text="Datos Recibidos")
+        data_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Nueva configuración de fuente para mejor legibilidad
+        self.sub_data_text = scrolledtext.ScrolledText(data_frame, height=8, font=("Consolas", 9))
+        self.sub_data_text.pack(fill="both", expand=True, padx=5, pady=5)
+        self.sub_data_text.config(state="disabled")
+        
+
+        
+        # Panel de control para visualización
+        control_panel = ttk.Frame(data_frame)
+        control_panel.pack(fill="x", pady=2)
+        
+        # Botón para limpiar el texto de datos recibidos
+        ttk.Button(control_panel, text="Limpiar", command=self.clear_sub_data).pack(side="left", padx=5)
+        
+        # Selector de modo de visualización
+        ttk.Label(control_panel, text="Visualización:").pack(side="left", padx=(10, 5))
+        self.view_mode = tk.StringVar(value="Tabla")
+        self.view_mode_combo = ttk.Combobox(control_panel, values=["Tabla", "JSON"], textvariable=self.view_mode, 
+                                        width=8, state="readonly")
+        self.view_mode_combo.pack(side="left", padx=5)
+        self.view_mode_combo.current(0)
+        ttk.Button(control_panel, text="Aplicar", command=self.refresh_view).pack(side="left", padx=5)
+        
+        
+        # NUEVO: Cuadro para escribir mensajes manuales
+        message_frame = ttk.LabelFrame(right, text="Enviar Mensaje")
+        message_frame.pack(fill="x", padx=10, pady=5)
+
+        self.message_entry = ttk.Entry(message_frame)
+        self.message_entry.pack(fill="x", padx=5, pady=5)
+
+        # Botones de acción
+        message_buttons = ttk.Frame(message_frame)
+        message_buttons.pack(fill="x", padx=5, pady=(0, 5))
+
+        ttk.Button(message_buttons, text="Enviar", command=self.send_message_placeholder).pack(side="left", expand=True, fill="x", padx=2)
+        ttk.Button(message_buttons, text="Limpiar Entrada", command=lambda: self.message_entry.delete(0, tk.END)).pack(side="left", expand=True, fill="x", padx=2)
+    
+    
+    def refresh_view(self):
+        """Actualiza la vista según el modo seleccionado"""
+        topic = self.sub_topic_var.get()
+        client = self.sub_client_var.get()
+        if not topic or not client:
+            return
             
-            # Botones para gestionar suscripciones
-            buttons_frame = ttk.Frame(left)
-            buttons_frame.pack(fill="x", padx=5, pady=5)
-            ttk.Button(buttons_frame, text="Refrescar", command=self.refresh_subscriptions).pack(side="left", expand=True, fill="x", padx=2)
-            ttk.Button(buttons_frame, text="Desuscribirse", command=self.unsubscribe_from_topic).pack(side="left", expand=True, fill="x", padx=2)
-
-            # NUEVO: Lista de tópicos públicos para suscribirse
-            public_topics_frame = ttk.LabelFrame(left, text="Tópicos Públicos Disponibles")
-            public_topics_frame.pack(fill="x", padx=5, pady=10)
-            self.public_topics_combo = ttk.Combobox(public_topics_frame, state="readonly")
-            self.public_topics_combo.pack(fill="x", padx=5, pady=5)
-            # Vincular evento de clic para refrescar la lista de tópicos públicos
-            self.public_topics_combo.bind("<ButtonPress-1>", lambda e: self.refresh_public_topics())
-            ttk.Button(public_topics_frame, text="Suscribirse", command=self.subscribe_to_public_topic).pack(fill="x", padx=5, pady=5)
-
-            # Detalles y acciones
-            right = ttk.LabelFrame(main_frame, text="Detalles")
-            right.pack(side="left", fill="both", expand=True)
-            controls = ttk.Frame(right)
-            controls.pack(fill="x", padx=10, pady=10)
+        # Limpiar el área de visualización
+        self.sub_data_text.config(state="normal")
+        self.sub_data_text.delete("1.0", tk.END)
+        
+        try:
+            # Obtener los datos de la suscripción
+            data = self.db.get_subscription_data(topic, client, limit=50)
             
-            ttk.Label(controls, text="Tópico:").pack(side="left", padx=5)
-            self.sub_topic_var = tk.StringVar()
-            self.sub_topic_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_topic_var)
-            self.sub_topic_entry.pack(side="left", padx=5)
-
-            ttk.Label(controls, text="Cliente Origen:").pack(side="left", padx=5)
-            self.sub_client_var = tk.StringVar()
-            self.sub_client_entry = ttk.Entry(controls, state="readonly", textvariable=self.sub_client_var)
-            self.sub_client_entry.pack(side="left", padx=5)
+            # Aplicar el formato según el modo seleccionado
+            mode = self.view_mode.get()
+            
+            if mode == "Tabla":
+                # Mostrar encabezado de tabla
+                header = f"{'Fecha/Hora':19} | {'Cliente':15} | {'Sensor':12} | {'Valor':8} | {'Unidades':8}\n"
+                header += "-"*70 + "\n"
+                self.sub_data_text.insert(tk.END, header)
+                
+                # Mostrar datos en formato tabla
+                for item in data:
+                    timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    cliente = client
+                    try:
+                        msg = item['data']
+                        if isinstance(msg, str):
+                            msg = json.loads(msg)
+                        sensor = msg.get("sensor", "-")
+                        valor = msg.get("value", "-")
+                        unidades = msg.get("units", "-")
                         
-            # Datos de suscripción
-            data_frame = ttk.LabelFrame(right, text="Datos Recibidos")
-            data_frame.pack(fill="both", expand=True, padx=10, pady=5)
-            self.sub_data_text = scrolledtext.ScrolledText(data_frame, height=8)
-            self.sub_data_text.pack(fill="both", expand=True, padx=5, pady=5)
-            self.sub_data_text.config(state="disabled")
-            # Botón para limpiar el texto de datos recibidos
-            ttk.Button(data_frame, text="Limpiar", command=self.clear_sub_data).pack(pady=5)
+                        line = f"{timestamp:19} | {cliente:15} | {sensor:12} | {valor:8} | {unidades:8}\n"
+                        self.sub_data_text.insert(tk.END, line)
+                    except Exception:
+                        line = f"{timestamp:19} | {cliente:15} | {'ERROR':12} | {'-':8} | {'-':8}\n"
+                        self.sub_data_text.insert(tk.END, line)
+            else:  # Modo JSON
+                # Mostrar datos en formato JSON indentado
+                for item in data:
+                    timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    try:
+                        msg = item['data']
+                        if isinstance(msg, str):
+                            msg_obj = json.loads(msg)
+                            # Convertir de nuevo a JSON con formato indentado
+                            formatted_json = json.dumps(msg_obj, indent=2)
+                            
+                            # Insertar con timestamp y luego el JSON formateado
+                            self.sub_data_text.insert(tk.END, f"[{timestamp}] {client}/{topic}\n")
+                            self.sub_data_text.insert(tk.END, f"{formatted_json}\n\n")
+                        else:
+                            self.sub_data_text.insert(tk.END, f"[{timestamp}] {client}/{topic}\n{msg}\n\n")
+                    except Exception as e:
+                        self.sub_data_text.insert(tk.END, f"[{timestamp}] Error al formatear: {str(e)}\n\n")
+        except Exception as e:
+            self.sub_data_text.insert(tk.END, f"Error al cargar datos: {str(e)}")
+            
+        self.sub_data_text.config(state="disabled")
+        self.sub_data_text.see(tk.END)  # Desplazarse al final
 
-            # NUEVO: Cuadro para escribir mensajes manuales
-            message_frame = ttk.LabelFrame(right, text="Enviar Mensaje")
-            message_frame.pack(fill="x", padx=10, pady=5)
+    def _get_sensor_tag(self, sensor_name):
+        """Determina el tag apropiado según el tipo de sensor"""
+        if not sensor_name:
+            return "default"
+            
+        sensor_lower = sensor_name.lower()
+        
+        if "temp" in sensor_lower:
+            return "temperature"
+        elif "hum" in sensor_lower:
+            return "humidity"
+        elif "light" in sensor_lower or "lum" in sensor_lower:
+            return "light"
+        elif "pres" in sensor_lower:
+            return "pressure"
+        else:
+            return "default"
 
-            self.message_entry = ttk.Entry(message_frame)
-            self.message_entry.pack(fill="x", padx=5, pady=5)
-
-            # Botones de acción
-            message_buttons = ttk.Frame(message_frame)
-            message_buttons.pack(fill="x", padx=5, pady=(0, 5))
-
-            ttk.Button(message_buttons, text="Enviar", command=self.send_message_placeholder).pack(side="left", expand=True, fill="x", padx=2)
-            ttk.Button(message_buttons, text="Limpiar Entrada", command=lambda: self.message_entry.delete(0, tk.END)).pack(side="left", expand=True, fill="x", padx=2)
-
+    def apply_sensor_filters(self):
+        """Aplica filtros para mostrar/ocultar ciertos tipos de sensores"""
+        # Guardar la posición actual
+        current_pos = self.sub_data_text.yview()[0]
+        
+        # Ocultar todos los mensajes primero
+        self.sub_data_text.tag_configure("hidden", elide=True)
+        
+        # Aplicar o quitar filtros según las opciones seleccionadas
+        self.sub_data_text.tag_configure("temperature", elide=not self.show_temp.get())
+        self.sub_data_text.tag_configure("humidity", elide=not self.show_humidity.get())
+        self.sub_data_text.tag_configure("light", elide=not self.show_light.get())
+        self.sub_data_text.tag_configure("default", elide=not self.show_other.get())
+        self.sub_data_text.tag_configure("pressure", elide=not self.show_other.get())
+        
+        # Mantener la misma posición de desplazamiento
+        self.sub_data_text.yview_moveto(current_pos)
+    
     def send_message_placeholder(self):
         topic_name = self.sub_topic_var.get().strip()
         client_id = self.sub_client_var.get().strip()
         message_text = self.message_entry.get().strip()
 
-        print(f"[MSG'{topic_name} {client_id} { message_text}'")
+        print(f"[MSG] {topic_name} {client_id} {message_text}")
 
         # Validar campos vacíos
         if not topic_name or not client_id:
@@ -482,10 +603,12 @@ class TinyMQGUI:
             return
 
         try:
+            # Usar el formato correcto compatible con la visualización
             message = {
-                "cliente": client_id,
-                "intruccion": message_text,
+                "sensor": "mensaje",  # Identificador para mensajes manuales
+                "value": message_text,
                 "timestamp": time.time(),
+                "units": ""  # Campo obligatorio aunque sea vacío
             }
             json_message = json.dumps(message)
             result = self.client.publish(topic_name, json_message)
@@ -498,16 +621,16 @@ class TinyMQGUI:
             messagebox.showerror("Error", f"Error al publicar el mensaje: {e}")
         
     def refresh_subscriptions(self):
-        try:
-            subscriptions = self.db.get_subscriptions()
-            self.subscriptions_listbox.delete(0, tk.END)
-            for sub in subscriptions:
-                self.subscriptions_listbox.insert(tk.END, f"{sub['id']}: {sub['topic']} ({sub['source_client_id']})")
-            self.status_label.config(text=f"Se encontraron {len(subscriptions)} suscripciones")
-            # NUEVO: refrescar lista de tópicos públicos
-            self.refresh_public_topics()
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al refrescar suscripciones: {str(e)}")
+            try:
+                subscriptions = self.db.get_subscriptions()
+                self.subscriptions_listbox.delete(0, tk.END)
+                for sub in subscriptions:
+                    self.subscriptions_listbox.insert(tk.END, f"{sub['id']}: {sub['topic']} ({sub['source_client_id']})")
+                self.status_label.config(text=f"Se encontraron {len(subscriptions)} suscripciones")
+                # NUEVO: refrescar lista de tópicos públicos
+                self.refresh_public_topics()
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al refrescar suscripciones: {str(e)}")
 
     def refresh_public_topics(self):
         """Obtiene los tópicos públicos directamente del broker"""
@@ -1284,28 +1407,51 @@ class TinyMQGUI:
             print(f"ERROR: No se pudo añadir texto a sub_data_text: {e}")
             import traceback
             traceback.print_exc()
-    
+
     def view_sub_data(self):
-        # Usar las variables en lugar de .get()
         topic = self.sub_topic_var.get()
         client = self.sub_client_var.get()
         if not topic or not client:
             messagebox.showinfo("Información", "Selecciona una suscripción primero")
             return
         try:
-            data = self.db.get_subscription_data(topic, client, limit=20)
+            data = self.db.get_subscription_data(topic, client, limit=50)
             self.sub_data_text.config(state="normal")
             self.sub_data_text.delete("1.0", tk.END)
-            if not data:
-                self.sub_data_text.insert(tk.END, f"No hay datos para el tópico '{topic}' del cliente '{client}'")
-            else:
-                self.sub_data_text.insert(tk.END, f"Datos para el tópico '{topic}' del cliente '{client}':\n\n")
-                for item in data:
-                    timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                    self.sub_data_text.insert(tk.END, f"[{timestamp}] {client}/{topic} - {item['data']}\n\n")
-                self.sub_data_text.config(state="disabled")
+            
+            # Cabecera
+            header = f"{'Fecha/Hora':19} | {'Cliente':15} | {'Sensor':12} | {'Valor':8} | {'Unidades':8}\n"
+            header += "-"*70 + "\n"
+            self.sub_data_text.insert(tk.END, header)
+            
+            for item in data:
+                timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                cliente = client
+                try:
+                    msg = item['data']
+                    if isinstance(msg, str):
+                        msg = json.loads(msg)
+                    sensor = msg.get("sensor", "-")
+                    valor = msg.get("value", "-")
+                    unidades = msg.get("units", "-")
+                    
+                    line = f"{timestamp:19} | {cliente:15} | {sensor:12} | {valor:8} | {unidades:8}\n"
+                    self.sub_data_text.insert(tk.END, line)
+                    
+                except Exception:
+                    sensor = valor = unidades = "-"
+                    line = f"{timestamp:19} | {cliente:15} | {sensor:12} | {valor:8} | {unidades:8}\n"
+                    self.sub_data_text.insert(tk.END, line)
+                    
+            self.sub_data_text.config(state="disabled")
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar datos: {str(e)}")
+
+    def configure_style(self):
+        style = ttk.Style()
+        style.configure('TButton', font=('Helvetica', 10))
+        style.configure('TLabel', font=('Helvetica', 10))
+        style.configure('Header.TLabel', font=('Helvetica', 12, 'bold'))
 
     def clear_sub_data(self):
         self.sub_data_text.config(state="normal")
@@ -1351,28 +1497,16 @@ class TinyMQGUI:
         self.das.add_data_callback(publish_callback)
 
     def create_subscription_callback(self, topic, source_client):
-        """Crea un callback configurado para una suscripción específica.
-        
-        Args:
-            topic: Nombre del tópico
-            source_client: ID del cliente origen
-            
-        Returns:
-            Función callback configurada para esta suscripción
-        """
         def callback(topic_str, message):
             try:
                 print(f"\n👉 RECIBIDO mensaje en tópico: '{topic_str}'")
                 message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
                 timestamp = int(time.time())
-                print(f"👉 CONTENIDO: '{message_str}'")
                 
                 # Normalizar el formato de tópico
                 if topic_str.startswith('['):
                     try:
-                        import json
                         topic_str = json.loads(topic_str)[0]
-                        print(f"👉 Tópico JSON decodificado: {topic_str}")
                     except Exception as e:
                         print(f"ERROR decodificando JSON: {e}")
                 
@@ -1385,8 +1519,6 @@ class TinyMQGUI:
                     actual_client_id = source_client
                     actual_topic_name = topic
                 
-                print(f"👉 Identificado como: Cliente='{actual_client_id}', Tópico='{actual_topic_name}'")
-                
                 # Guardar en BD
                 self.db.add_subscription_data(topic, source_client, timestamp, message_str)
                 
@@ -1394,17 +1526,70 @@ class TinyMQGUI:
                 selected_topic = self.sub_topic_var.get()
                 selected_client = self.sub_client_var.get()
                 if selected_topic == actual_topic_name and selected_client == actual_client_id:
-                    time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-                    msg_text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name} - {message_str}\n\n"
-                    self.root.after(0, lambda text=msg_text: self.append_to_sub_data(text))
-                
+                    try:
+                        # Intentar parsear mensaje como JSON
+                        data = json.loads(message_str)
+                        sensor = data.get("sensor", "-")
+                        valor = data.get("value", "-")
+                        unidades = data.get("units", "-")
+                        time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Enviar datos estructurados en lugar de texto plano
+                        message_data = {
+                            "timestamp": time_fmt,
+                            "client": actual_client_id,
+                            "topic": actual_topic_name,
+                            "sensor": sensor,
+                            "value": valor,
+                            "units": unidades
+                        }
+                        # Actualizar la vista según el modo seleccionado
+                        if self.view_mode.get() == "Tabla":
+                            self.root.after(0, lambda data=message_data: self.append_formatted_data(data))
+                        else:
+                            # Si está en modo JSON, usar el formato JSON
+                            formatted_json = json.dumps(data, indent=2)
+                            text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name}\n{formatted_json}\n\n"
+                            self.root.after(0, lambda t=text: self.append_to_sub_data(t))
+                    except Exception as e:
+                        # Si falla el parseo, registrar el error y mostrar en formato de texto
+                        print(f"ERROR al procesar mensaje como JSON: {e}")
+                        time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                        msg_text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name} - {message_str}\n"
+                        self.root.after(0, lambda text=msg_text: self.append_to_sub_data(text))
+                    
             except Exception as e:
-                print(f"⚠️ ERROR EN CALLBACK: {e}")
-                import traceback
-                traceback.print_exc()
-        
+                    print(f"⚠️ ERROR EN CALLBACK: {e}")
+                    import traceback
+                    traceback.print_exc()
+
         return callback
 
+    def append_formatted_data(self, data):
+        """Añade datos formateados al área de visualización."""
+        try:
+            self.sub_data_text.config(state="normal")
+            
+            # Insertar línea formateada sin colorear por tipo de sensor
+            line = f"{data['timestamp']:19} | {data['client']:15} | {data['sensor']:12} | {data['value']:8} | {data['units']:8}\n"
+            
+            # Insertar al final sin tag específico
+            self.sub_data_text.insert(tk.END, line)
+            
+            # Mantener un máximo de líneas (por ejemplo, 100)
+            lines = self.sub_data_text.get("1.0", tk.END).splitlines()
+            if len(lines) > 100:
+                self.sub_data_text.delete("1.0", "2.0")  # Eliminar primera línea
+            
+            # Desplazarse al final automáticamente
+            self.sub_data_text.see(tk.END)
+            self.sub_data_text.config(state="disabled")
+            
+        except Exception as e:
+            print(f"ERROR: No se pudo añadir datos formateados: {e}")
+            import traceback
+            traceback.print_exc()
+            
     def create_admin_tab(self):
         """Crea la pestaña de administración de tópicos."""
         tab = ttk.Frame(self.notebook)
