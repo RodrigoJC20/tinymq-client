@@ -586,6 +586,7 @@ class TinyMQGUI:
         client_id = self.sub_client_var.get().strip()
         message_text = self.message_entry.get().strip()
 
+
         print(f"[MSG] {topic_name} {client_id} {message_text}")
 
         # Validar campos vacíos
@@ -603,12 +604,12 @@ class TinyMQGUI:
             return
 
         try:
-            # Usar el formato correcto compatible con la visualización
             message = {
-                "sensor": "mensaje",  # Identificador para mensajes manuales
+                "cliente": client_id,  # AÑADIR ESTA LÍNEA - ID del propietario del tópico
+                "sensor": "mensaje",
                 "value": message_text,
                 "timestamp": time.time(),
-                "units": ""  # Campo obligatorio aunque sea vacío
+                "units": ""
             }
             json_message = json.dumps(message)
             result = self.client.publish(topic_name, json_message)
