@@ -604,22 +604,26 @@ class TinyMQGUI:
             return
 
         try:
-            message = {
-                "cliente": client_id,  # AÑADIR ESTA LÍNEA - ID del propietario del tópico
-                "sensor": "mensaje",
-                "value": message_text,
-                "timestamp": time.time(),
-                "units": ""
-            }
-            json_message = json.dumps(message)
-            result = self.client.publish(topic_name, json_message)
-            if not result:
-                messagebox.showerror("Error", f"No se pudo publicar en el tópico {topic_name}.")
-            else:
-                messagebox.showinfo("Éxito", f"Mensaje enviado a {topic_name}.")
-                self.message_entry.delete(0, tk.END) 
+                # Obtener el ID del cliente actual (remitente)
+                my_client_id = self.db.get_client_id()
+                
+                message = {
+                    "cliente": client_id,     # ID del propietario del tópico (para enrutamiento)
+                    "sender": my_client_id,   # ID del cliente que envía el mensaje (remitente)
+                    "sensor": "mensaje",
+                    "value": message_text,
+                    "timestamp": time.time(),
+                    "units": ""
+                }
+                json_message = json.dumps(message)
+                result = self.client.publish(topic_name, json_message)
+                if not result:
+                    messagebox.showerror("Error", f"No se pudo publicar en el tópico {topic_name}.")
+                else:
+                    messagebox.showinfo("Éxito", f"Mensaje enviado a {topic_name}.")
+                    self.message_entry.delete(0, tk.END) 
         except Exception as e:
-            messagebox.showerror("Error", f"Error al publicar el mensaje: {e}")
+                messagebox.showerror("Error", f"Error al publicar el mensaje: {e}")
         
     def refresh_subscriptions(self):
             try:
@@ -1514,7 +1518,7 @@ class TinyMQGUI:
                 # Separar client_id/topic
                 parts = topic_str.split('/', 1)
                 if len(parts) == 2:
-                    actual_client_id = parts[0]
+                    actual_client_id = parts[0]  # ID del propietario (para enrutamiento)
                     actual_topic_name = parts[1]
                 else:
                     actual_client_id = source_client
@@ -1530,15 +1534,19 @@ class TinyMQGUI:
                     try:
                         # Intentar parsear mensaje como JSON
                         data = json.loads(message_str)
+                        
+                        # CAMBIO PRINCIPAL: Extraer el ID del remitente si está disponible
+                        sender_id = data.get("sender", actual_client_id)
                         sensor = data.get("sensor", "-")
                         valor = data.get("value", "-")
                         unidades = data.get("units", "-")
                         time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # Enviar datos estructurados en lugar de texto plano
+                        # Enviar datos estructurados incluyendo el remitente
                         message_data = {
                             "timestamp": time_fmt,
-                            "client": actual_client_id,
+                            "client": actual_client_id,  # ID propietario (para referencia)
+                            "sender": sender_id,         # ID remitente (quien envió el mensaje)
                             "topic": actual_topic_name,
                             "sensor": sensor,
                             "value": valor,
@@ -1550,7 +1558,7 @@ class TinyMQGUI:
                         else:
                             # Si está en modo JSON, usar el formato JSON
                             formatted_json = json.dumps(data, indent=2)
-                            text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name}\n{formatted_json}\n\n"
+                            text = f"[{time_fmt}] {sender_id}@{actual_client_id}/{actual_topic_name}\n{formatted_json}\n\n"
                             self.root.after(0, lambda t=text: self.append_to_sub_data(t))
                     except Exception as e:
                         # Si falla el parseo, registrar el error y mostrar en formato de texto
@@ -1566,13 +1574,23 @@ class TinyMQGUI:
 
         return callback
 
+    
+
     def append_formatted_data(self, data):
         """Añade datos formateados al área de visualización."""
         try:
             self.sub_data_text.config(state="normal")
             
-            # Insertar línea formateada sin colorear por tipo de sensor
-            line = f"{data['timestamp']:19} | {data['client']:15} | {data['sensor']:12} | {data['value']:8} | {data['units']:8}\n"
+            # CAMBIO: Ahora mostramos "sender" (remitente) en lugar de "client" (propietario)
+            sender_id = data.get('sender', data['client'])  # Usar sender si está disponible, si no client
+            
+            # Si el remitente es diferente del propietario, mostrarlo con formato especial
+            if sender_id != data['client']:
+                # Formato: timestamp | remitente@propietario | sensor | valor | unidades
+                line = f"{data['timestamp']:19} | {sender_id:15} | {data['sensor']:12} | {data['value']:8} | {data['units']:8}\n"
+            else:
+                # Si remitente == propietario, mostrar de forma normal
+                line = f"{data['timestamp']:19} | {sender_id:15} | {data['sensor']:12} | {data['value']:8} | {data['units']:8}\n"
             
             # Insertar al final sin tag específico
             self.sub_data_text.insert(tk.END, line)
