@@ -24,6 +24,9 @@ class Client:
             host: Broker hostname or IP address
             port: Broker port
         """
+        
+        self._recv_lock = threading.Lock()
+        self._cached_admin_requests = []  # Inicializar la variable
         self.client_id = client_id
         self.host = host
         self.port = port
@@ -36,6 +39,40 @@ class Client:
         
         self._recv_buffer = bytearray()
         self._recv_lock = threading.Lock()
+    
+    def create_topic(self, topic: str, callback: Callable[[str, bytes], None] = None) -> bool:
+        """
+        Crea un tópico (publicando un mensaje especial) y se suscribe automáticamente a él.
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return False
+
+        if callback is None:
+            def callback(t, m):
+                print(f"[AUTO] Mensaje recibido en '{t}': {m}")
+        
+        sub_ok = self.subscribe(topic, callback)
+        if not sub_ok:
+            print(f"No se pudo suscribir al tópico '{topic}'")
+            return False
+
+        # Crear un mensaje especial que el broker pueda identificar
+        topic_create_message = json.dumps({
+            "__topic_create": True,
+            "client_id": self.client_id,
+            "topic_name": topic,
+            "timestamp": int(time.time())
+        })
+
+        # Publicar el mensaje especial en lugar de un mensaje vacío
+        pub_ok = self.publish(topic, topic_create_message)
+        if not pub_ok:
+            print(f"No se pudo crear/publicar en el tópico '{topic}'")
+            return False
+
+        print(f"[SUCCESS] Tópico '{topic}' creado correctamente en el broker")
+        return True
     
     def connect(self) -> bool:
         """
@@ -104,8 +141,11 @@ class Client:
             return False
         
         try:
-            broker_topic = f"{self.client_id}/{topic}"
-            wrapped_topic = json.dumps([broker_topic])  # Esto crea '["client_id/topic"]'
+            message_dict = json.loads(message)
+
+            # Ahora sí puedes acceder a 'cliente'
+            broker_topic = f"{message_dict['cliente']}/{topic}" if "cliente" in message_dict else f"{self.client_id}/{topic}"
+            wrapped_topic = json.dumps([broker_topic])
 
             broker_topic_bytes = wrapped_topic.encode('utf-8')
             topic_length = len(broker_topic_bytes)
@@ -204,7 +244,6 @@ class Client:
                 if not data:
                     # Connection closed
                     break
-
                 # Append to buffer
                 with self._recv_lock:
                     self._recv_buffer.extend(data)
@@ -225,7 +264,7 @@ class Client:
                     self._recv_buffer = self._recv_buffer[consumed:]
                 
             except Exception as e:
-                print(f"Read error: {e}")
+                #print(f"Read error: {e}")
                 break
         
         # Ensure we're disconnected on error, but don't call disconnect() directly
@@ -246,30 +285,42 @@ class Client:
         Args:
             packet: Packet to handle
         """
+        # Añadir debug para todos los paquetes
+        print(f"DEBUG: Recibido paquete tipo {packet.packet_type.name}, tamaño payload: {len(packet.payload)} bytes")
 
         if packet.packet_type == PacketType.CONNACK:
             self.connected = True
         
         elif packet.packet_type == PacketType.PUBACK:
             # Could track message IDs for QoS in future
-            print(f"PacketType.PUBACK")
+            print(f"DEBUG: PacketType.PUBACK")
             pass
             
         elif packet.packet_type == PacketType.SUBACK:
             # Could track subscription IDs in future
-            print(f"PacketType.SUBACK")
+            print(f"DEBUG: PacketType.SUBACK")
             pass
             
         elif packet.packet_type == PacketType.UNSUBACK:
-            print(f"PacketType.UNSUBACK")
+            print(f"DEBUG: PacketType.UNSUBACK")
             # Could track unsubscription IDs in future
             pass
             
         elif packet.packet_type == PacketType.PUB:
             try:
-                # Intentar primero como JSON tradicional
                 data = json.loads(packet.payload.decode('utf-8'))
-                topic = data.get("topic")
+                topic_raw = data.get("topic")
+
+                # Aquí convertimos topic_raw de JSON para que sea lista o string limpio
+                try:
+                    topic_parsed = json.loads(topic_raw)
+                except Exception:
+                    topic_parsed = topic_raw
+                # Si es lista, extraemos el primer elemento (string)
+                if isinstance(topic_parsed, list):
+                    topic = topic_parsed[0]
+                else:
+                    topic = topic_parsed
                 message = data.get("message", "")
 
                 if topic and topic in self.topic_handlers:
@@ -305,3 +356,272 @@ class Client:
 
             except Exception as e:
                 print(f"[ERROR] Error general al manejar PUB packet: {e}")
+
+        # Añadir el manejador para ADMIN_RESP
+        elif packet.packet_type == PacketType.ADMIN_RESP:
+            try:
+                data = json.loads(packet.payload.decode('utf-8'))
+                self._cached_admin_requests = data
+                print(f"[INFO] Recibidas {len(data)} solicitudes administrativas")
+                # Opcionalmente, puedes notificar a la interfaz gráfica que hay nuevas solicitudes
+                # si tienes algún tipo de mecanismo de callback configurado
+            except Exception as e:
+                print(f"[ERROR] Error procesando respuesta administrativa: {e}")
+
+        # Añadir el manejador para TOPIC_RESP
+        elif packet.packet_type == PacketType.TOPIC_RESP:
+            print(f"[DEBUG] Recibido paquete TOPIC_RESP estándar")
+            # Este caso debería ser manejado por _register_temp_packet_handler
+            # pero se añade aquí para completitud
+
+    def get_published_topics(self) -> List[Dict[str, str]]:
+        """
+        Obtiene una lista de tópicos publicados desde el broker.
+        
+        Returns:
+            Lista de diccionarios con información de los tópicos publicados.
+            Cada diccionario contiene 'name' y 'owner' como claves.
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return []
+        
+        try:
+            # Crear y enviar el paquete de solicitud
+            packet = Packet(packet_type=PacketType.TOPIC_REQ)
+            if not self._send_packet(packet):
+                print("Error al enviar solicitud TOPIC_REQ")
+                return []
+            
+            # Añadir manejador para la respuesta
+            topic_response = []
+            response_received = False
+            
+            def topic_response_handler(packet_type, payload):
+                nonlocal topic_response, response_received
+                if packet_type == PacketType.TOPIC_RESP:
+                    try:
+                        # Decodificar el JSON
+                        json_str = payload.decode('utf-8')
+                        topics_data = json.loads(json_str)
+                        topic_response = topics_data
+                        response_received = True
+                    except Exception as e:
+                        print(f"Error decodificando lista de tópicos: {e}")
+                    
+            # Registrar temporalmente un handler para procesar la respuesta
+            self._register_temp_packet_handler(PacketType.TOPIC_RESP, topic_response_handler)
+            
+            # Esperar por la respuesta con timeout
+            start_time = time.time()
+            while not response_received and time.time() - start_time < 10:  # 10 segundos de timeout
+                time.sleep(0.1)  # Pequeña pausa para reducir uso de CPU
+            
+            if not response_received:
+                print("Timeout esperando respuesta del broker")
+                
+            return topic_response
+            
+        except Exception as e:
+            print(f"Error solicitando tópicos publicados: {e}")
+            return []
+        
+    def _register_temp_packet_handler(self, packet_type, handler_func):
+        """
+        Registra un manejador temporal para un tipo específico de paquete.
+        
+        Args:
+            packet_type: El tipo de paquete a manejar
+            handler_func: Función que recibe (packet_type, payload)
+        """
+        original_handle_packet = self._handle_packet
+        
+        def wrapper_handler(packet):
+            if packet.packet_type == packet_type:
+                handler_func(packet.packet_type, packet.payload)
+            return original_handle_packet(packet)
+        
+        self._handle_packet = wrapper_handler
+        
+    def set_topic_publish(self, topic: str, publish: bool = True) -> bool:
+        """
+        Cambia el estado de publicación de un tópico en el broker.
+        
+        Args:
+            topic: Nombre del tópico a modificar
+            publish: True para activar publicación, False para desactivar
+            
+        Returns:
+            True si se envió el comando correctamente, False en caso contrario
+        """
+        if not self.connected:
+            print("No conectado al broker.")
+            return False
+            
+        try:
+            # Crear un mensaje especial para cambiar el estado de publicación
+            publish_message = json.dumps({
+                "__topic_publish": True,
+                "client_id": self.client_id,
+                "topic_name": topic,
+                "publish": publish,
+                "timestamp": int(time.time())
+            })
+            
+            # Publicar este mensaje en el tópico correspondiente
+            result = self.publish(topic, publish_message)
+            if result:
+                print(f"[INFO] Estado de publicación para '{topic}' cambiado a: {'ON' if publish else 'OFF'}")
+            return result
+        except Exception as e:
+            print(f"Error al cambiar estado de publicación: {e}")
+            return False
+        
+    def request_admin_status(self, topic_name: str, owner_id: str) -> bool:
+        """
+        Solicita ser administrador de un tópico.
+        
+        Args:
+            topic_name: Nombre del tópico
+            owner_id: ID del cliente dueño del tópico
+            
+        Returns:
+            True si la solicitud se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje especial para solicitud de administrador
+            request_message = json.dumps({
+                "__admin_request": True,
+                "client_id": self.client_id,
+                "topic_name": topic_name,
+                "owner_id": owner_id,
+                "timestamp": int(time.time())
+            })
+            
+            # El tópico para enviar la solicitud es uno especial
+            admin_topic = f"{owner_id}/admin"  # Mantener esta estructura
+            
+            # Publicar mensaje
+            result = self.publish(admin_topic, request_message)
+            return result
+        except Exception as e:
+            print(f"Error al solicitar estado de administrador: {e}")
+            return False
+
+    def register_admin_notification_handler(self, callback):
+            """Registra un handler para recibir notificaciones de administración"""
+            if not self.connected:
+                return False
+                
+            try:
+                # Suscribirse al tópico especial para notificaciones administrativas
+                notification_topic = f"{self.client_id}/admin"  # Cambiar a esta estructura
+
+                
+                def notification_handler(topic_str, message):
+                    try:
+                        data = json.loads(message)
+                        if "__admin_notification" in data:
+                            callback(data)
+                    except Exception as e:
+                        print(f"Error procesando notificación: {e}")
+                
+                return self.subscribe(notification_topic, notification_handler)
+            except Exception as e:
+                print(f"Error registrando handler de notificaciones: {e}")
+                return False
+            
+    def get_admin_requests(self):
+        """Obtiene las solicitudes de administración pendientes"""
+        try:
+            # Verificar que estamos conectados
+            if not self.connected:
+                return []
+            
+            # Solicitar las peticiones al broker
+            packet = Packet(packet_type=PacketType.ADMIN_REQ)
+            if not self._send_packet(packet):
+                print("Error al enviar solicitud de administración")
+                return []
+                
+            # Implementación real que devuelve las solicitudes
+            # Esto es solo un ejemplo y debe adaptarse a tu sistema
+            return self._cached_admin_requests  # Esta variable debería poblarse cuando llegan notificaciones
+        except Exception as e:
+            print(f"Error al obtener solicitudes de administración: {e}")
+            return []
+        
+    def respond_to_admin_request(self, request_id, topic_name, requester_id, approve):
+        """
+        Responde a una solicitud de administración.
+        
+        Args:
+            request_id: ID de la solicitud
+            topic_name: Nombre del tópico
+            requester_id: ID del cliente solicitante
+            approve: True para aprobar, False para rechazar
+            
+        Returns:
+            True si se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje de respuesta
+            response = json.dumps({
+                "__admin_response": True,
+                "client_id": self.client_id,
+                "request_id": request_id,
+                "topic_name": topic_name,
+                "requester_id": requester_id,
+                "approved": approve,
+                "timestamp": int(time.time())
+            })
+            
+            # Enviar a tópico especial 
+            response_topic = f"system/admin/responses"
+            
+            # Publicar respuesta
+            return self.publish(response_topic, response)
+        except Exception as e:
+            print(f"Error respondiendo a solicitud: {e}")
+            return False
+        
+    def set_sensor_status(self, topic_name, sensor_name, active):
+        """
+        Configura el estado de un sensor como administrador.
+        
+        Args:
+            topic_name: Nombre del tópico
+            sensor_name: Nombre del sensor
+            active: True para activar, False para desactivar
+            
+        Returns:
+            True si se envió correctamente
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            # Crear mensaje de configuración
+            config = json.dumps({
+                "__admin_sensor_config": True,
+                "client_id": self.client_id,
+                "topic_name": topic_name,
+                "sensor_name": sensor_name, 
+                "active": active,
+                "timestamp": int(time.time())
+            })
+            
+            # Tópico para configuración
+            config_topic = f"system/admin/config"
+            
+            # Publicar configuración
+            return self.publish(config_topic, config)
+        except Exception as e:
+            print(f"Error configurando sensor: {e}")
+            return False
