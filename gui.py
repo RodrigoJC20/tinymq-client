@@ -1296,10 +1296,30 @@ class TinyMQGUI:
             return
         topic, client = match.groups()
         
-        # Actualizar las variables en lugar de usar delete/insert
+        # Actualizar las variables
         self.sub_topic_var.set(topic)
         self.sub_client_var.set(client)
         self.view_sub_data()
+        
+        # Programar actualización periódica
+        self.schedule_subscription_refresh()
+
+    def schedule_subscription_refresh(self):
+        # Cancelar timer anterior si existe
+        if hasattr(self, '_refresh_timer'):
+            self.root.after_cancel(self._refresh_timer)
+        
+        # Programar nueva actualización cada 30 segundos
+        self._refresh_timer = self.root.after(30000, self._auto_refresh_subscription_data)
+
+    def _auto_refresh_subscription_data(self):
+        # Solo actualizar si hay un tópico y cliente seleccionado
+        topic = self.sub_topic_var.get()
+        client = self.sub_client_var.get()
+        if topic and client:
+            self.view_sub_data()
+            # Programar siguiente actualización
+            self.schedule_subscription_refresh()
         
     def subscribe_to_topic(self):
         if not self.client or not self.client.connected:
@@ -1420,14 +1440,21 @@ class TinyMQGUI:
             messagebox.showinfo("Información", "Selecciona una suscripción primero")
             return
         try:
-            data = self.db.get_subscription_data(topic, client, limit=50)
+            # Mantener el límite alto para asegurar que se muestren todos los mensajes históricos
+            data = self.db.get_subscription_data(topic, client, limit=500)  
             self.sub_data_text.config(state="normal")
             self.sub_data_text.delete("1.0", tk.END)
-            
+        
             # Cabecera
             header = f"{'Fecha/Hora':19} | {'Cliente':15} | {'Sensor':12} | {'Valor':8} | {'Unidades':8}\n"
             header += "-"*70 + "\n"
             self.sub_data_text.insert(tk.END, header)
+            
+            # Dejar espacio entre cabecera y datos
+            self.sub_data_text.insert(tk.END, "\n")
+            
+            # Ordenar explícitamente los datos por timestamp para garantizar orden cronológico
+            data = sorted(data, key=lambda x: x["timestamp"])
             
             for item in data:
                 timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
