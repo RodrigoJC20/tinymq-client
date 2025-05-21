@@ -1390,10 +1390,13 @@ class TinyMQGUI:
                 # Guardar en BD
                 self.db.add_subscription_data(topic, source_client, timestamp, message_str)
                 
-                # SIEMPRE mostrar el mensaje en tiempo real
-                time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-                msg_text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name} - {message_str}\n\n"
-                self.root.after(0, lambda text=msg_text: self.append_to_sub_data(text))
+                # Mostrar SOLO si la suscripción seleccionada coincide
+                selected_topic = self.sub_topic_var.get()
+                selected_client = self.sub_client_var.get()
+                if selected_topic == actual_topic_name and selected_client == actual_client_id:
+                    time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                    msg_text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name} - {message_str}\n\n"
+                    self.root.after(0, lambda text=msg_text: self.append_to_sub_data(text))
                 
             except Exception as e:
                 print(f"⚠️ ERROR EN CALLBACK: {e}")
