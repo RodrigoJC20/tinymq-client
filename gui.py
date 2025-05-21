@@ -774,6 +774,8 @@ class TinyMQGUI:
                 messagebox.showerror("Error", "No se pudo reconectar al broker")
         except Exception as e:
             messagebox.showerror("Error de reconexión", str(e))
+            
+        self.setup_admin_notifications()
         
     def subscribe_to_public_topic(self):
         """Suscribirse a un tópico público sin solicitar ID del cliente"""
@@ -905,6 +907,8 @@ class TinyMQGUI:
                 messagebox.showerror("Error", "No se pudo conectar al broker")
         except Exception as e:
             messagebox.showerror("Error de conexión", str(e))
+        
+        self.setup_admin_notifications()
             
     def disconnect_from_broker(self):
         if self.client and self.client.connected:

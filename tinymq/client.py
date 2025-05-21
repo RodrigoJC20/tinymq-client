@@ -512,27 +512,47 @@ class Client:
             return False
 
     def register_admin_notification_handler(self, callback):
-            """Registra un handler para recibir notificaciones de administración"""
-            if not self.connected:
-                return False
-                
-            try:
-                # Suscribirse al tópico especial para notificaciones administrativas
-                notification_topic = f"{self.client_id}/admin"  # Cambiar a esta estructura
+        """Registra un handler para recibir notificaciones de administración"""
+        if not self.connected:
+            return False
+            
+        try:
+            # Suscribirse al tópico especial para notificaciones administrativas
+            notification_topic = f"{self.client_id}/admin"
 
-                
-                def notification_handler(topic_str, message):
-                    try:
-                        data = json.loads(message)
-                        if "__admin_notification" in data:
-                            callback(data)
-                    except Exception as e:
-                        print(f"Error procesando notificación: {e}")
-                
-                return self.subscribe(notification_topic, notification_handler)
-            except Exception as e:
-                print(f"Error registrando handler de notificaciones: {e}")
-                return False
+            def notification_handler(topic_str, message):
+                try:
+                    data = json.loads(message)
+                    # Procesar tanto solicitudes como notificaciones
+                    if "__admin_request" in data or "__admin_notification" in data:
+                        # Agregar campo type si no existe
+                        if "__admin_request" in data and "type" not in data:
+                            data["type"] = "request"
+                            data["requester_id"] = data.get("client_id", "desconocido")
+                            data["topic_name"] = data.get("topic_name", "desconocido")
+                            
+                            # Almacenar solicitud en caché para recuperarla después
+                            if not hasattr(self, "_cached_admin_requests"):
+                                self._cached_admin_requests = []
+                            request_id = len(self._cached_admin_requests) + 1
+                            data["id"] = request_id
+                            self._cached_admin_requests.append({
+                                "id": request_id,
+                                "requester_id": data["requester_id"],
+                                "topic": data["topic_name"]
+                            })
+                        
+                        # Llamar al callback con los datos
+                        callback(data)
+                except Exception as e:
+                    print(f"Error procesando notificación: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            return self.subscribe(notification_topic, notification_handler)
+        except Exception as e:
+            print(f"Error registrando handler de notificaciones: {e}")
+            return False
             
     def get_admin_requests(self):
         """Obtiene las solicitudes de administración pendientes"""
