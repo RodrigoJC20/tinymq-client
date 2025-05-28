@@ -46,6 +46,7 @@ class Client:
         self._requesting_published_topics = False
         self._requesting_admin_topics = False
         self._cached_admin_requests = []
+        #prueba cambio leo
         
         # Resto de configuraciones
         self.topic_handlers: Dict[str, Callable[[str, bytes], None]] = {}
