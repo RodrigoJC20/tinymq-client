@@ -566,8 +566,21 @@ class TinyMQGUI:
                     cliente = client
                     try:
                         msg = item['data']
+                        # Intentar convertir diccionario Python a objeto Python
                         if isinstance(msg, str):
-                            msg = json.loads(msg)
+                            try:
+                                # Primero intentar como JSON válido
+                                msg = json.loads(msg)
+                            except json.JSONDecodeError:
+                                try:
+                                    # Si falla, intentar como diccionario Python
+                                    import ast
+                                    msg = ast.literal_eval(msg)
+                                except (ValueError, SyntaxError):
+                                    # Si todo falla, usar un diccionario vacío
+                                    msg = {}
+                        
+                        # Extraer datos del mensaje
                         sensor = msg.get("sensor", "-")
                         valor = msg.get("value", "-")
                         unidades = msg.get("units", "-")
@@ -584,8 +597,20 @@ class TinyMQGUI:
                     try:
                         msg = item['data']
                         if isinstance(msg, str):
-                            msg_obj = json.loads(msg)
-                            # Convertir de nuevo a JSON con formato indentado
+                            try:
+                                # Primero intentar como JSON válido
+                                msg_obj = json.loads(msg)
+                            except json.JSONDecodeError:
+                                try:
+                                    # Si falla, intentar como diccionario Python
+                                    import ast
+                                    msg_obj = ast.literal_eval(msg)
+                                except (ValueError, SyntaxError):
+                                    # Si todo falla, mostrar el mensaje como texto
+                                    self.sub_data_text.insert(tk.END, f"[{timestamp}] {client}/{topic}\n{msg}\n\n")
+                                    continue
+                            
+                            # Convertir a JSON formateado
                             formatted_json = json.dumps(msg_obj, indent=2)
                             
                             # Insertar con timestamp y luego el JSON formateado
@@ -1516,8 +1541,21 @@ class TinyMQGUI:
                 cliente = client
                 try:
                     msg = item['data']
+                    # Intentar convertir diccionario Python a objeto Python
                     if isinstance(msg, str):
-                        msg = json.loads(msg)
+                        try:
+                            # Primero intentar como JSON válido
+                            msg = json.loads(msg)
+                        except json.JSONDecodeError:
+                            try:
+                                # Si falla, intentar como diccionario Python
+                                import ast
+                                msg = ast.literal_eval(msg)
+                            except (ValueError, SyntaxError):
+                                # Si todo falla, usar un diccionario vacío
+                                msg = {}
+                    
+                    # Extraer datos del mensaje
                     sensor = msg.get("sensor", "-")
                     valor = msg.get("value", "-")
                     unidades = msg.get("units", "-")
@@ -1586,7 +1624,8 @@ class TinyMQGUI:
     def create_subscription_callback(self, topic, source_client):
         def callback(topic_str, message):
             try:
-                print(f"\n👉 RECIBIDO mensaje en tópico: '{topic_str}'")
+                #print(f"\n👉 RECIBIDO mensaje en tópico: '{topic_str}'")
+                # Convertir mensaje a string si es bytes
                 message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
                 timestamp = int(time.time())
                 
@@ -1606,18 +1645,42 @@ class TinyMQGUI:
                     actual_client_id = source_client
                     actual_topic_name = topic
                 
-                # Guardar en BD
-                self.db.add_subscription_data(topic, source_client, timestamp, message_str)
+                # IMPORTANTE: Normalizar formato del mensaje a JSON válido antes de guardar
+                try:
+                    # Si ya es un JSON válido, parsearlo
+                    msg_obj = json.loads(message_str)
+                    # Re-serializar para garantizar formato JSON válido
+                    message_json = json.dumps(msg_obj)
+                except json.JSONDecodeError:
+                    # Si parece un diccionario Python (con comillas simples), convertirlo a JSON
+                    if message_str.startswith('{') and message_str.endswith('}'):
+                        try:
+                            import ast
+                            msg_obj = ast.literal_eval(message_str)
+                            message_json = json.dumps(msg_obj)
+                        except (ValueError, SyntaxError):
+                            # Si no se puede parsear, guardarlo como está
+                            message_json = message_str
+                    else:
+                        # No es un formato reconocible, guardarlo como está
+                        message_json = message_str
+                
+                # Guardar en BD el mensaje normalizado en formato JSON
+                self.db.add_subscription_data(topic, source_client, timestamp, message_json)
                 
                 # Mostrar SOLO si la suscripción seleccionada coincide
                 selected_topic = self.sub_topic_var.get()
                 selected_client = self.sub_client_var.get()
                 if selected_topic == actual_topic_name and selected_client == actual_client_id:
                     try:
-                        # Intentar parsear mensaje como JSON
-                        data = json.loads(message_str)
+                        # Usar el objeto ya parseado si está disponible
+                        if 'msg_obj' in locals():
+                            data = msg_obj
+                        else:
+                            # Si no se pudo parsear antes, intentarlo de nuevo
+                            data = json.loads(message_json)
                         
-                        # CAMBIO PRINCIPAL: Extraer el ID del remitente si está disponible
+                        # Extraer información del remitente si está disponible
                         sender_id = data.get("sender", actual_client_id)
                         sensor = data.get("sensor", "-")
                         valor = data.get("value", "-")
@@ -1634,6 +1697,7 @@ class TinyMQGUI:
                             "value": valor,
                             "units": unidades
                         }
+                        
                         # Actualizar la vista según el modo seleccionado
                         if self.view_mode.get() == "Tabla":
                             self.root.after(0, lambda data=message_data: self.append_formatted_data(data))
@@ -1648,7 +1712,7 @@ class TinyMQGUI:
                         time_fmt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
                         msg_text = f"[{time_fmt}] {actual_client_id}/{actual_topic_name} - {message_str}\n"
                         self.root.after(0, lambda text=msg_text: self.append_to_sub_data(text))
-                    
+                        
             except Exception as e:
                     print(f"⚠️ ERROR EN CALLBACK: {e}")
                     import traceback
