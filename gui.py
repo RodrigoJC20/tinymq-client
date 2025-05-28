@@ -858,6 +858,9 @@ class TinyMQGUI:
             # Crear cliente
             self.client = Client(client_id, host, port)
             
+            # Register connection state callback BEFORE connecting
+            self.client.register_connection_state_callback(self.on_connection_state_changed)
+            
             # Intentar conectar con timeout razonable
             connection_success = self.client.connect()
             
@@ -872,12 +875,8 @@ class TinyMQGUI:
         
         print(f"DEBUG: Conexión al broker {'exitosa' if success else 'fallida'}")
         if success:
-            self.connected = True
-            self.connect_btn.config(state="disabled")
-            self.disconnect_btn.config(state="normal")
-            self.status_var.set("Conectado")
-            self.status_label.config(text="Conectado al broker correctamente")
-            
+            # Don't update UI state here since the connection callback will handle it
+            # Just perform the setup tasks
             try:
                 if self.das and self.das.running:
                     self.client.subscribe_to_sensor_control(self.das)
@@ -914,13 +913,14 @@ class TinyMQGUI:
             except Exception as e:
                 messagebox.showwarning("Advertencia", f"Error al restaurar configuración: {str(e)}")
         else:
-            
+            # Handle connection failure (the callback won't be called in this case)
             self.client = None
             self.connect_btn.config(state="normal")
+            self.disconnect_btn.config(state="disabled")
             self.status_var.set("Desconectado")
             self.status_label.config(text="No se pudo conectar al broker")
             messagebox.showerror("Error", "No se pudo conectar al broker")
-            
+
     def on_admin_notify_message(self, topic_str, payload):
         """Procesa notificaciones administrativas recibidas por publicación."""
         try:
@@ -955,15 +955,13 @@ class TinyMQGUI:
         
     def _handle_connection_error(self, error):
         """Maneja errores de conexión en el hilo principal."""
+        print(f"ERROR: Error de conexión: {error}")
         self.client = None
         self.connect_btn.config(state="normal")
-        self.status_var.set("Error de conexión")
-        self.status_label.config(text=f"Error: {str(error)[:50]}")
+        self.disconnect_btn.config(state="disabled")
+        self.status_var.set("Desconectado")
+        self.status_label.config(text=f"Error de conexión: {str(error)}")
         messagebox.showerror("Error", f"Error de conexión: {str(error)}")
-        print(f"Error de conexión: {str(error)}")
-        import traceback
-        traceback.print_exc()
-
 
     def disconnect_from_broker(self):
         if self.client and self.client.connected:
@@ -3332,6 +3330,39 @@ class TinyMQGUI:
             
         except Exception as e:
             print(f"Error mostrando notificación de sensor: {e}")
+
+    def on_connection_state_changed(self, connected: bool):
+        """
+        Callback para manejar cambios de estado de conexión.
+        Se ejecuta cuando el broker termina la conexión o cuando se conecta.
+        
+        Args:
+            connected: True si está conectado, False si se desconectó
+        """
+        def update_ui():
+            if connected:
+                print("🔗 GUI: Conexión establecida")
+                self.connected = True
+                self.connect_btn.config(state="disabled")
+                self.disconnect_btn.config(state="normal")
+                self.status_var.set("Conectado")
+                self.status_label.config(text="Conectado al broker correctamente")
+            else:
+                print("🔌 GUI: Conexión perdida - actualizando UI")
+                self.connected = False
+                self.connect_btn.config(state="normal")
+                self.disconnect_btn.config(state="disabled")
+                self.status_var.set("Desconectado")
+                self.status_label.config(text="Conexión perdida con el broker")
+                
+                # Show notification to user about lost connection
+                messagebox.showwarning(
+                    "Conexión Perdida", 
+                    "Se ha perdido la conexión con el broker. Puede volver a conectarse usando el botón 'Conectar'."
+                )
+        
+        # Schedule UI update in the main thread
+        self.root.after(0, update_ui)
 
 def main():
     root = tk.Tk()

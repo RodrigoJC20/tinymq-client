@@ -1,4 +1,3 @@
-
 """
 TinyMQ client implementation.
 
@@ -38,6 +37,7 @@ class Client:
         self._admin_request_callback = None
         self._admin_resign_callback = None
         self._sensor_status_callback = None  # AÑADIR ESTA LÍNEA
+        self._connection_state_callback = None  # NEW: Callback for connection state changes
 
         
         # Inicializar estructuras de datos para handlers temporales
@@ -132,7 +132,11 @@ class Client:
                 pass
             self.socket = None
         
+        was_connected = self.connected
         self.connected = False
+        # NEW: Notify about connection state change if we were connected
+        if was_connected:
+            self._notify_connection_state_change(False)
     
     def publish(self, topic: str, message: str) -> bool:
         """
@@ -279,6 +283,8 @@ class Client:
         # as it would try to join the current thread
         self.running = False
         self.connected = False
+        # NEW: Notify about connection state change
+        self._notify_connection_state_change(False)
         if self.socket:
             try:
                 self.socket.close()
@@ -328,6 +334,8 @@ class Client:
         # SEGUNDO: Manejo normal de paquetes (resto del código igual)
         if packet.packet_type == PacketType.CONNACK:
             self.connected = True
+            # NEW: Notify about connection state change
+            self._notify_connection_state_change(True)
             print("✅ Conectado al broker")
         
         elif packet.packet_type == PacketType.PUBACK:
@@ -447,6 +455,27 @@ class Client:
         self._sensor_status_callback = callback
         print(f"✅ Callback de estado de sensor registrado")
         
+    def register_connection_state_callback(self, callback):
+        """
+        Registra un callback que será llamado cuando el estado de conexión cambie.
+        
+        Args:
+            callback: Función que recibirá el nuevo estado de conexión (True/False)
+        """
+        self._connection_state_callback = callback
+
+    def _notify_connection_state_change(self, connected: bool):
+        """
+        Notifica un cambio en el estado de conexión.
+        
+        Args:
+            connected: Nuevo estado de conexión
+        """
+        if self._connection_state_callback:
+            try:
+                self._connection_state_callback(connected)
+            except Exception as e:
+                print(f"Error in connection state callback: {e}")
             
     def get_my_admin_topics(self) -> List[Dict[str, Any]]:
         """
