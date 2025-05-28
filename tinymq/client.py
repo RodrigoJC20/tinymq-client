@@ -46,7 +46,6 @@ class Client:
         self._requesting_published_topics = False
         self._requesting_admin_topics = False
         self._cached_admin_requests = []
-        #prueba cambio leo
         
         # Resto de configuraciones
         self.topic_handlers: Dict[str, Callable[[str, bytes], None]] = {}
@@ -294,6 +293,7 @@ class Client:
     
     def _handle_packet(self, packet: Packet) -> None:
         """Handle a received packet."""
+        
         print(f"DEBUG: Recibido paquete tipo {packet.packet_type.name}, tamaño payload: {len(packet.payload)} bytes")
 
         # PRIMERO: Verificar si hay un handler temporal para este tipo de paquete
@@ -364,13 +364,32 @@ class Client:
                 data = json.loads(packet.payload.decode('utf-8'))
                 topic = data.get('topic', '')
                 message = data.get('message', b'')
-                
+
+                # Normaliza el nombre del tópico para el handler
+                topic_normalized = topic
+                if topic.startswith('["') and topic.endswith('"]'):
+                    topic_normalized = topic[2:-2]
+
+                # Decodifica el mensaje si es string JSON
                 if isinstance(message, str):
-                    message = message.encode('utf-8')
-                
-                # Call the appropriate topic handler
+                    try:
+                        message_obj = json.loads(message)
+                    except Exception:
+                        message_obj = message
+                else:
+                    message_obj = message
+
+                # Debug
+                #print(f"DEBUG: Handler keys: {list(self.topic_handlers.keys())}")
+                #print(f"DEBUG: Buscando handler para: '{topic}' o '{topic_normalized}'")
+
+                # Llama al handler correcto
                 if topic in self.topic_handlers:
-                    self.topic_handlers[topic](topic, message)
+                    self.topic_handlers[topic](topic, message_obj)
+                elif topic_normalized in self.topic_handlers:
+                    self.topic_handlers[topic_normalized](topic_normalized, message_obj)
+                else:
+                    print(f"WARNING: No handler registrado para '{topic}' ni '{topic_normalized}'")
             except json.JSONDecodeError:
                 print(f"Invalid JSON in PUB packet: {packet.payload}")
             except Exception as e:

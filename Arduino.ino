@@ -90,7 +90,7 @@ void sendAllSensorData(float temp, float humidity, int light, int fan, int dista
   Serial.println(json);
 }
 
-vvoid forceSetFan(bool on)
+void forceSetFan(bool on)
 {
   // Asegurar estado del ventilador independientemente de interferencias
   fanState = on;
