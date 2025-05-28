@@ -1,9 +1,8 @@
-import json
+from typing import Optional, List, Dict, Any, Callable
+import serial  # Librería para comunicación serial
 import threading
 import time
-from typing import Optional, List, Dict, Any, Callable
-
-import serial  # Librería para comunicación serial
+import json
 
 from .db import Database
 
@@ -13,7 +12,7 @@ class DataAcquisitionService:
     Data Acquisition Service for TinyMQ client using Serial communication.
     """
 
-    def __init__(self, db: Database, serial_port: str = "COM3", baud_rate: int = 115200, verbose: bool = False):
+    def __init__(self, db: Database, serial_port: str = "COM8", baud_rate: int = 115200, verbose: bool = False):
         """
         Args:
             db: Instancia de la base de datos
@@ -39,99 +38,176 @@ class DataAcquisitionService:
             return True
 
         try:
+            # Iniciar conexión serial
             self.serial_conn = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+            time.sleep(2)  # Dar tiempo al ESP32 para inicializarse
+            
             self.running = True
             self.thread = threading.Thread(target=self._read_serial_data)
             self.thread.daemon = True
             self.thread.start()
-            print(f"DAS iniciado en el puerto serial {self.serial_port} a {self.baud_rate} baudios")
+            
+            print(f"✅ DAS: Servicio iniciado en puerto {self.serial_port}")
             return True
         except Exception as e:
-            print(f"Error al iniciar DAS en el puerto serial: {e}")
+            print(f"❌ DAS: Error iniciando servicio: {e}")
             return False
 
     def stop(self) -> None:
         """Detiene el servicio de adquisición de datos."""
+        if not self.running:
+            return
+            
         self.running = False
-        if self.serial_conn and self.serial_conn.is_open:
-            self.serial_conn.close()
-        if self.thread:
+        if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
-            self.thread = None
-
-    def _read_serial_data(self) -> None:
-        """Lee datos línea por línea desde el puerto serial, con reintentos si hay desconexión."""
-        while self.running:
-            if not self.serial_conn or not self.serial_conn.is_open:
-                try:
-                    self.serial_conn = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
-                    print(f"Conectado al puerto serial {self.serial_port}")
-                except Exception as e:
-                    print(f"No se pudo conectar al puerto serial {self.serial_port}: {e}")
-                    time.sleep(5)  # Espera antes de reintentar
-                    continue
-
+                
+        if self.serial_conn:
             try:
-                line = self.serial_conn.readline().decode('utf-8').strip()
-                if line:
-                    self._process_data(line.encode('utf-8'))
-            except serial.SerialException as e:
-                print(f"Error leyendo desde serial: {e}. Intentando reconectar...")
+                self.serial_conn.close()
+            except:
+                pass
+            self.serial_conn = None
+            
+        print("✅ DAS: Servicio detenido")
+    
+    def send_command(self, command: Dict) -> bool:
+        """
+        Envía un comando al ESP32.
+        
+        Args:
+            command: Diccionario con el comando a enviar. Debe tener un campo 'command'
+                    y los parámetros necesarios (ej. {"command": "set_fan", "value": 1})
+                    
+        Returns:
+            bool: True si se envió el comando, False en caso de error
+        """
+        if not self.running or not self.serial_conn:
+            print("❌ DAS: No hay conexión serial activa para enviar comandos")
+            return False
+        
+        try:
+            # Convertir comando a JSON
+            cmd_json = json.dumps(command)
+            if self.verbose:
+                print(f"📤 DAS: Enviando comando: {cmd_json}")
+            
+            # Enviar comando
+            self.serial_conn.write(f"{cmd_json}\n".encode('utf-8'))
+            self.serial_conn.flush()
+            return True
+        except Exception as e:
+            print(f"❌ DAS: Error enviando comando: {e}")
+            return False
+    
+    def _read_serial_data(self) -> None:
+        """Función principal de lectura de datos seriales. Corre en un thread separado."""
+        try:
+            buffer = ""
+            while self.running and self.serial_conn:
                 try:
-                    self.serial_conn.close()
-                except Exception:
-                    pass
-                self.serial_conn = None
-                time.sleep(5)  # Espera antes de reconectar
-            except Exception as e:
-                print(f"Error inesperado leyendo desde serial: {e}")
-                time.sleep(1)
+                    # Leer un byte del puerto serial
+                    byte = self.serial_conn.read(1)
+                    if not byte:
+                        continue
+                    
+                    char = byte.decode('utf-8')
+                    buffer += char
+                    
+                    # Si encontramos un salto de línea, procesar la línea
+                    if char == '\n':
+                        data_read = self._process_data(buffer.encode('utf-8'))
+                        buffer = ""
+                        
+                        if data_read > 0:
+                            self.total_readings_received += data_read
+                except UnicodeDecodeError:
+                    # Ignorar errores de decodificación
+                    buffer = ""
+                    continue
+        except Exception as e:
+            if self.running:  # Solo mostrar error si todavía debería estar corriendo
+                print(f"❌ DAS: Error en thread de lectura: {e}")
+        finally:
+            print("ℹ️ DAS: Thread de lectura finalizado")
             
     def _process_data(self, data: bytes) -> int:
-        """Procesa datos recibidos (en formato JSON)."""
-        count = 0
+        """
+        Procesa los datos recibidos del ESP32.
+        
+        Args:
+            data: Datos recibidos como bytes
+            
+        Returns:
+            int: Número de lecturas procesadas
+        """
         try:
-            json_data = json.loads(data.decode('utf-8'))
-
-            if isinstance(json_data, list):
-                for sensor in json_data:
-                    if not isinstance(sensor, dict):
-                        continue
-
-                    name = sensor.get("name")
-                    value = sensor.get("value")
-                    timestamp = sensor.get("timestamp", int(time.time()))
-                    units = sensor.get("units", "")
-
-                    if name is not None and value is not None:
-                        self._store_sensor_reading(name, value, timestamp, units)
-                        count += 1
-            elif isinstance(json_data, dict):
-                name = json_data.get("name")
-                value = json_data.get("value")
-                timestamp = json_data.get("timestamp", int(time.time()))
-                units = json_data.get("units", "")
-
-                if name is not None and value is not None:
-                    self._store_sensor_reading(name, value, timestamp, units)
-                    count += 1
-
-        except json.JSONDecodeError:
-            print(f"JSON inválido: {data.decode('utf-8')}")
+            # Decodificar los datos
+            data_str = data.decode('utf-8').strip()
+            if not data_str:
+                return 0
+                
+            if self.verbose:
+                print(f"📥 DAS: Datos recibidos: {data_str}")
+                
+            # Intentar parsear como JSON
+            try:
+                json_data = json.loads(data_str)
+                
+                # Es una respuesta de comando
+                if isinstance(json_data, dict) and "result" in json_data:
+                    if self.verbose:
+                        print(f"✅ DAS: Respuesta de comando: {json_data['result']}")
+                    return 0
+                
+                # Es un error
+                if isinstance(json_data, dict) and "error" in json_data:
+                    print(f"❌ DAS: Error del ESP32: {json_data['error']}")
+                    return 0
+                    
+                # Es una lectura de sensores
+                if isinstance(json_data, list):
+                    timestamp = int(time.time())
+                    count = 0
+                    
+                    for reading in json_data:
+                        if isinstance(reading, dict) and "name" in reading and "value" in reading:
+                            sensor_name = reading["name"]
+                            value = reading["value"]
+                            units = reading.get("units", "")
+                            
+                            # Almacenar lectura en BD
+                            self._store_sensor_reading(sensor_name, value, timestamp, units)
+                            count += 1
+                    
+                    return count
+            except json.JSONDecodeError:
+                # No es JSON, probablemente sea un mensaje de texto simple
+                if self.verbose:
+                    print(f"ℹ️ DAS: Mensaje (no JSON): {data_str}")
+                return 0
+                
         except Exception as e:
-            print(f"Error al procesar datos: {e}")
-
-        return count
+            print(f"❌ DAS: Error procesando datos: {e}")
+            return 0
 
     def _store_sensor_reading(self, name: str, value: Any, timestamp: int, units: str) -> None:
-        """Almacena una lectura en la base de datos y ejecuta callbacks."""
+        """
+        Almacena una lectura de sensor y notifica a los callbacks registrados.
+        
+        Args:
+            name: Nombre del sensor
+            value: Valor del sensor
+            timestamp: Timestamp de la lectura
+            units: Unidades de medida
+        """
         try:
-            if not isinstance(value, str):
-                value = str(value)
-
-            self.db.add_reading(name, value, timestamp, units)
-            self.total_readings_received += 1
-
+            # Guardar en la base de datos
+            if self.db:
+                # Cambiar store_sensor_reading por add_reading
+                self.db.add_reading(name, value, timestamp, units)
+            
+            # Notificar a los callbacks
             for callback in self.on_data_received_callbacks:
                 try:
                     callback(name, {
@@ -140,28 +216,37 @@ class DataAcquisitionService:
                         "units": units
                     })
                 except Exception as e:
-                    print(f"Error en callback de datos: {e}")
-
-            if self.verbose:
-                print(f"Lectura almacenada: {name} = {value}{units} @ {timestamp}")
+                    print(f"❌ DAS: Error en callback: {e}")
         except Exception as e:
-            print(f"Error al guardar lectura: {e}")
-
+            print(f"❌ DAS: Error almacenando lectura: {e}")
+        
     def add_data_callback(self, callback: Callable[[str, Any], None]) -> None:
-        """Agrega una función callback que se ejecutará cuando llegue una nueva lectura."""
-        self.on_data_received_callbacks.append(callback)
+        """
+        Añade un callback que será llamado cuando se reciba una nueva lectura.
+        
+        Args:
+            callback: Función que recibe (sensor_name, data_dict)
+        """
+        if callback not in self.on_data_received_callbacks:
+            self.on_data_received_callbacks.append(callback)
+            print(f"✅ DAS: Callback registrado ({len(self.on_data_received_callbacks)} total)")
 
     def get_stats(self) -> Dict[str, Any]:
-        """Devuelve estadísticas básicas del servicio."""
+        """Obtiene estadísticas del servicio."""
         return {
-            "readings_received": self.total_readings_received,
-            "running": self.running
+            "running": self.running,
+            "port": self.serial_port,
+            "baud_rate": self.baud_rate,
+            "total_readings": self.total_readings_received,
+            "callbacks_registered": len(self.on_data_received_callbacks)
         }
 
     def set_verbose(self, verbose: bool) -> None:
-        """Activa o desactiva el modo detallado."""
+        """Activa o desactiva el modo verboso."""
         self.verbose = verbose
+        print(f"ℹ️ DAS: Modo verboso {'activado' if verbose else 'desactivado'}")
         
     def clear_callbacks(self) -> None:
         """Elimina todos los callbacks registrados."""
-        self.on_data_received_callbacks = []
+        self.on_data_received_callbacks.clear()
+        print("✅ DAS: Callbacks eliminados")
