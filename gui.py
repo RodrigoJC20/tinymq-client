@@ -1258,7 +1258,6 @@ class TinyMQGUI:
             messagebox.showinfo("Éxito", f"Publicación {state} para {success_count} tópico(s)")
             
 
-
     def add_sensor_to_topic(self):
         selection = self.topics_listbox.curselection()
         if not selection:
@@ -1291,6 +1290,8 @@ class TinyMQGUI:
                     continue
                 
                 self.db.add_sensor_to_topic(topic["name"], sensor_name)
+                
+                self._setup_topic_publishing(topic["name"])
                 success_count += 1
             except Exception as e:
                 messagebox.showerror("Error", f"Error al agregar sensor al tópico ID {topic_id}: {str(e)}")
@@ -1335,6 +1336,8 @@ class TinyMQGUI:
                     continue
                 
                 self.db.remove_sensor_from_topic(topic["name"], sensor_name)
+                
+                self._setup_topic_publishing(topic["name"])
                 success_count += 1
             except Exception as e:
                 messagebox.showerror("Error", f"Error al eliminar sensor del tópico ID {topic_id}: {str(e)}")
