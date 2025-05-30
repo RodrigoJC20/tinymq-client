@@ -344,7 +344,7 @@ class TinyMQGUI:
         # Lista de tópicos con selección múltiple
         left = ttk.LabelFrame(main_frame, text="Tópicos")
         left.pack(side="left", fill="y", padx=(0, 10))
-        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED)
+        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED, exportselection=0) # <--- AÑADIR exportselection=0
         self.topics_listbox.pack(fill="y", expand=True, padx=5, pady=5)
         self.topics_listbox.bind('<<ListboxSelect>>', self.on_topic_selected)
         ttk.Button(left, text="Refrescar", command=self.refresh_topics).pack(fill="x", padx=5, pady=5)
@@ -391,6 +391,8 @@ class TinyMQGUI:
         self.sensor_to_add_var = tk.StringVar()
         self.sensor_combo = ttk.Combobox(add_frame, textvariable=self.sensor_to_add_var, state="readonly")
         self.sensor_combo.pack(side="left", padx=5, expand=True, fill="x")
+        self.sensor_combo.bind("<<ComboboxSelected>>", self.on_sensor_combo_selected)
+
         ttk.Button(add_frame, text="Agregar", command=self.add_sensor_to_topic).pack(side="left", padx=5)
         ttk.Button(add_frame, text="Eliminar", command=self.remove_sensor_from_topic).pack(side="left", padx=5)
         ttk.Button(add_frame, text="Marcar como Activable", command=self.mark_sensor_as_activable).pack(side="left", padx=5)
@@ -1094,6 +1096,10 @@ class TinyMQGUI:
             messagebox.showerror("Error", f"Error al refrescar sensores: {str(e)}")
 
     def on_sensor_selected(self, event):
+        # Guardar la selección actual de tópicos antes de procesar
+        topics_selection = self.topics_listbox.curselection()
+        topics_indices = list(topics_selection) if topics_selection else []
+        
         selection = self.sensors_listbox.curselection()
         if not selection:
             return
@@ -1121,8 +1127,44 @@ class TinyMQGUI:
                 self.realtime_text.config(state="normal")
                 self.realtime_text.insert(tk.END, f"Monitoreo en tiempo real activado para sensor: {sensor['name']}\nEsperando datos...\n\n")
                 self.realtime_text.config(state="disabled")
+            
+            # Restaurar la selección de tópicos que teníamos antes
+            if topics_indices:
+                for idx in topics_indices:
+                    if idx < self.topics_listbox.size():
+                        self.topics_listbox.selection_set(idx)
+                        
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar detalles del sensor: {str(e)}")
+
+    def on_sensor_combo_selected(self, event):
+        """Mantiene la selección del tópico cuando se selecciona un sensor del combo box"""
+        # Guardar selección de tópicos actual
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            return  # No hay tópico seleccionado, nada que preservar
+        
+        # Guardar los índices completos seleccionados
+        selected_indices = list(selection)
+        
+        # Hacer varios intentos de restauración con diferentes retrasos
+        # para contrarrestar cualquier evento que pueda deseleccionar después
+        for delay in [10, 50, 100, 200, 300]:  # Múltiples intentos espaciados
+            self.root.after(delay, lambda idx=selected_indices: self._restore_full_selection(idx))
+    
+    def _restore_full_selection(self, indices):
+        """Restaura la selección completa de tópicos por sus índices"""
+        # Primero comprobamos que los índices son válidos
+        valid_indices = [idx for idx in indices if idx < self.topics_listbox.size()]
+        if not valid_indices:
+            return
+        
+        # NO limpiamos la selección actual, solo añadimos los que faltan
+        for idx in valid_indices:
+            self.topics_listbox.selection_set(idx)
+            
+        # Hacer visible el primer tópico seleccionado
+        self.topics_listbox.see(valid_indices[0])
 
     def load_sensor_history(self):
         sensor_id = self.sensor_id_var.get()
@@ -1284,6 +1326,8 @@ class TinyMQGUI:
             messagebox.showinfo("Información", "Selecciona un sensor para agregar")
             return
         
+        selected_indices = list(selection)
+        
         success_count = 0
         for selected_index in selection:
             selected_item = self.topics_listbox.get(selected_index)
@@ -1313,7 +1357,8 @@ class TinyMQGUI:
         
         if success_count > 0:
             messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' añadido a {success_count} tópico(s)")
-            self.on_topic_selected(None)
+            self.refresh_topics_preserve_selection(selected_indices)
+
 
             
     def remove_sensor_from_topic(self):
@@ -1326,6 +1371,9 @@ class TinyMQGUI:
         if not sensor_name:
             messagebox.showinfo("Información", "Selecciona un sensor para eliminar")
             return
+        
+        selected_indices = list(selection)
+
         
         success_count = 0
         not_found_topics = []
@@ -1367,7 +1415,77 @@ class TinyMQGUI:
         if message:
             messagebox.showinfo("Resultado", message)
         
-        self.on_topic_selected(None)
+        self.refresh_topics_preserve_selection(selected_indices)
+
+    def refresh_topics_preserve_selection(self, indices_to_select=None):
+        """Actualiza la lista de tópicos y mantiene la selección anterior"""
+        try:
+            # Si no se proporcionan índices, intentar usar la selección actual
+            if indices_to_select is None:
+                selected = self.topics_listbox.curselection()
+                indices_to_select = list(selected) if selected else []
+
+            # Obtener los tópicos y actualizar la lista
+            topics = self.db.get_topics()
+            self.topics_listbox.delete(0, tk.END)
+            topic_names = []
+            
+            if not topics:
+                self.topics_listbox.insert(tk.END, "Sin tópicos registrados")
+            else: 
+                for topic in topics:
+                    status = "✓" if topic["publish"] else " "
+                    display = f"{topic['id']}: {topic['name']} [{status}]"
+                    self.topics_listbox.insert(tk.END, display)
+                    topic_names.append(topic['name'])
+
+            # Restaurar la selección
+            for index in indices_to_select:
+                if index < self.topics_listbox.size():
+                    self.topics_listbox.selection_set(index)
+            
+            # Si hay alguna selección, actualizar el panel de detalles
+            if indices_to_select and indices_to_select[0] < self.topics_listbox.size():
+                self.topics_listbox.see(indices_to_select[0])
+                self.on_topic_selected_internal(None)
+            
+            # Actualizar sensores disponibles
+            sensors = self.db.get_sensors()
+            sensor_names = [s["name"] for s in sensors]
+            self.sensor_combo['values'] = sensor_names
+            self.status_label.config(text=f"Se encontraron {len(topics)} tópicos")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al refrescar tópicos: {str(e)}")
+
+    # Nueva función para manejar la selección de tópico sin modificar la selección
+    def on_topic_selected_internal(self, event):
+        """Como on_topic_selected pero sin cambiar la selección"""
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            return
+        
+        # Usar el primer tópico seleccionado para mostrar detalles
+        selected_index = selection[0]
+        selected_item = self.topics_listbox.get(selected_index)
+        topic_id = selected_item.split(":")[0].strip()
+        try:
+            topic = self.db.get_topic(topic_id)
+            if not topic:
+                return
+            self.topic_id_var.set(str(topic["id"]))
+            self.topic_name_var.set(topic["name"])
+            self.topic_publish_var.set("Sí" if topic["publish"] else "No")
+            sensors = self.db.get_topic_sensors(topic["name"])
+            self.topic_sensors_text.config(state="normal")
+            self.topic_sensors_text.delete("1.0", tk.END)
+            if not sensors:
+                self.topic_sensors_text.insert(tk.END, "No hay sensores asociados a este tópico.")
+            else:
+                for sensor in sensors:
+                    self.topic_sensors_text.insert(tk.END, f"- {sensor['name']}: {sensor['last_value']}\n")
+            self.topic_sensors_text.config(state="disabled")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar detalles del tópico: {str(e)}")
 
     def refresh_subscriptions(self):
         try:
