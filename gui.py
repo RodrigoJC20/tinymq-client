@@ -1587,40 +1587,46 @@ class TinyMQGUI:
     def _setup_topic_publishing(self, topic_name: str) -> None:
         """
         Setup publishing for a topic.
-        
         Args:
             topic_name: Name of topic to publish
         """
         if not self.das or not self.client or not self.client.connected:
             return
-        
-        sensors = self.db.get_topic_sensors(topic_name)
-        if not sensors:
-            return
-            
-        sensor_names = [s["name"] for s in sensors]
-        
-        def publish_callback(sensor_name: str, data: Dict[str, Any]) -> None:
-            current_topic_info = self.db.get_topic(topic_name)
-            if not current_topic_info or not current_topic_info["publish"]:
-                return
-            
-            if sensor_name in sensor_names and self.client and self.client.connected:
-                message = {
-                    "sensor": sensor_name,
-                    "value": data["value"],
-                    "timestamp": data["timestamp"],
-                    "units": data["units"]
-                }
-                try:
-                    json_message = json.dumps(message)
-                    result = self.client.publish(topic_name, json_message)
-                    if not result:
-                        messagebox.showinfo("Error", f'Error al publicar en el topico {topic_name}')
-                except Exception as e:
-                    messagebox.showinfo("Error", f'Error: {e}')
-        
-        self.das.add_data_callback(publish_callback)
+
+        # Eliminar todos los callbacks previos para evitar duplicados y publicaciones de sensores eliminados
+        self.das.clear_callbacks()
+
+        # Registrar de nuevo los callbacks para todos los tópicos publicados
+        published_topics = self.db.get_published_topics()
+        for topic_info in published_topics:
+            t_name = topic_info["name"]
+            sensors = self.db.get_topic_sensors(t_name)
+            if not sensors:
+                continue
+            sensor_names = [s["name"] for s in sensors]
+
+            def make_publish_callback(topic_name, sensor_names):
+                def publish_callback(sensor_name: str, data: dict):
+                    current_topic_info = self.db.get_topic(topic_name)
+                    if not current_topic_info or not current_topic_info["publish"]:
+                        return
+                    if sensor_name in sensor_names and self.client and self.client.connected:
+                        message = {
+                            "sensor": sensor_name,
+                            "value": data["value"],
+                            "timestamp": data["timestamp"],
+                            "units": data["units"]
+                        }
+                        try:
+                            json_message = json.dumps(message)
+                            result = self.client.publish(topic_name, json_message)
+                            if not result:
+                                messagebox.showinfo("Error", f'Error al publicar en el topico {topic_name}')
+                        except Exception as e:
+                            messagebox.showinfo("Error", f'Error: {e}')
+                return publish_callback
+
+            self.das.add_data_callback(make_publish_callback(t_name, sensor_names))
 
     def create_subscription_callback(self, topic, source_client):
         def callback(topic_str, message):
