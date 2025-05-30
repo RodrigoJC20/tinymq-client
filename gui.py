@@ -1153,6 +1153,16 @@ class TinyMQGUI:
 
     def refresh_topics(self):
         try:
+            # Guardar el tópico seleccionado actualmente (por nombre)
+            selected = self.topics_listbox.curselection()
+            selected_topic_name = None
+            if selected:
+                selected_item = self.topics_listbox.get(selected[0])
+                # El formato es "id: nombre [✓]"
+                parts = selected_item.split(":")
+                if len(parts) > 1:
+                    selected_topic_name = parts[1].split("[")[0].strip()
+
             topics = self.db.get_topics()
             self.topics_listbox.delete(0, tk.END)
             topic_names = []
@@ -1161,8 +1171,19 @@ class TinyMQGUI:
             else: 
                 for topic in topics:
                     status = "✓" if topic["publish"] else " "
-                    self.topics_listbox.insert(tk.END, f"{topic['id']}: {topic['name']} [{status}]")
+                    display = f"{topic['id']}: {topic['name']} [{status}]"
+                    self.topics_listbox.insert(tk.END, display)
                     topic_names.append(topic['name'])
+
+            # Restaurar la selección si corresponde
+            if selected_topic_name:
+                for i in range(self.topics_listbox.size()):
+                    item = self.topics_listbox.get(i)
+                    if f": {selected_topic_name} " in item or item.endswith(f": {selected_topic_name} [✓]") or item.endswith(f": {selected_topic_name} [ ]"):
+                        self.topics_listbox.selection_set(i)
+                        self.topics_listbox.see(i)
+                        break
+
             sensors = self.db.get_sensors()
             sensor_names = [s["name"] for s in sensors]
             self.sensor_combo['values'] = sensor_names
@@ -1199,6 +1220,10 @@ class TinyMQGUI:
             messagebox.showerror("Error", f"Error al cargar detalles del tópico: {str(e)}")
 
     def toggle_topic_publish(self, publish):
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+        
         selection = self.topics_listbox.curselection()
         if not selection:
             messagebox.showinfo("Información", "Selecciona al menos un tópico primero")
@@ -2655,8 +2680,8 @@ class TinyMQGUI:
         toolbar_frame = ttk.Frame(topics_frame)
         toolbar_frame.pack(fill="x", padx=5, pady=5)
         
-        ttk.Button(toolbar_frame, text="Actualizar Lista", 
-                command=self.refresh_my_topics_admin).pack(side="left", padx=(0, 5))
+        ttk.Button(toolbar_frame, text="Actualizar Mis Tópicos", 
+                command=self.on_update_my_topics_admin).pack(side="left", padx=(0, 5))
         ttk.Label(toolbar_frame, text="Seleccione un tópico para gestionar").pack(side="right", padx=5)
         
         # TreeView con contenedor para scrollbar
@@ -2712,11 +2737,18 @@ class TinyMQGUI:
         
         ttk.Button(main_frame, text="Revocar Admin", 
                 command=self.revoke_topic_admin_privilege, padding=5).pack(side="bottom", padx=5, pady=5, anchor="w")
+               
+    def on_update_my_topics_admin(self):
+        """Callback para el botón 'Actualizar Lista' en Mis Tópicos."""
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
+            return
+        self.refresh_my_topics_admin()
                     
     def refresh_my_topics_admin(self):
         """Actualiza la lista de mis tópicos en la pestaña de administración."""
         if not self.client or not self.client.connected:
-            messagebox.showwarning("Advertencia", "No estás conectado al broker")
+            #messagebox.showwarning("Advertencia", "No estás conectado al broker")
             return
 
         try:
@@ -2814,6 +2846,11 @@ class TinyMQGUI:
         selection = self.my_topics_admin_tree.selection()
         if not selection:
             messagebox.showwarning("Advertencia", "Selecciona un tópico primero")
+            return
+        
+        # si no esta conectado mostrar mensaje
+        if not self.client or not self.client.connected:
+            messagebox.showwarning("Advertencia", "No estás conectado al broker")
             return
         
         item = self.my_topics_admin_tree.item(selection[0])
