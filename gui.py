@@ -1153,15 +1153,9 @@ class TinyMQGUI:
 
     def refresh_topics(self):
         try:
-            # Guardar el tópico seleccionado actualmente (por nombre)
+            # Guardar el índice seleccionado actualmente
             selected = self.topics_listbox.curselection()
-            selected_topic_name = None
-            if selected:
-                selected_item = self.topics_listbox.get(selected[0])
-                # El formato es "id: nombre [✓]"
-                parts = selected_item.split(":")
-                if len(parts) > 1:
-                    selected_topic_name = parts[1].split("[")[0].strip()
+            selected_index = selected[0] if selected else None
 
             topics = self.db.get_topics()
             self.topics_listbox.delete(0, tk.END)
@@ -1175,15 +1169,10 @@ class TinyMQGUI:
                     self.topics_listbox.insert(tk.END, display)
                     topic_names.append(topic['name'])
 
-            # Restaurar la selección si corresponde
-            if selected_topic_name:
-                for i in range(self.topics_listbox.size()):
-                    item = self.topics_listbox.get(i)
-                    # Buscar por nombre exacto
-                    if f": {selected_topic_name} " in item or item.endswith(f": {selected_topic_name} [✓]") or item.endswith(f": {selected_topic_name} [ ]"):
-                        self.topics_listbox.selection_set(i)
-                        self.topics_listbox.see(i)
-                        break
+            # Restaurar la selección por índice si corresponde
+            if selected_index is not None and self.topics_listbox.size() > selected_index:
+                self.topics_listbox.selection_set(selected_index)
+                self.topics_listbox.see(selected_index)
 
             sensors = self.db.get_sensors()
             sensor_names = [s["name"] for s in sensors]
@@ -1191,7 +1180,7 @@ class TinyMQGUI:
             self.status_label.config(text=f"Se encontraron {len(topics)} tópicos")
         except Exception as e:
             messagebox.showerror("Error", f"Error al refrescar tópicos: {str(e)}")
-            
+        
     def on_topic_selected(self, event):
         selection = self.topics_listbox.curselection()
         if not selection:
