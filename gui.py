@@ -3471,6 +3471,14 @@ class TinyMQGUI:
             popup = tk.Toplevel(self.root)
             popup.title("Notificación de Sensor")
             popup.geometry("250x100")
+
+            # Obtener la posición del puntero del mouse
+            x = self.root.winfo_pointerx()
+            y = self.root.winfo_pointery()
+
+            # Posicionar la ventana en las coordenadas del puntero
+            popup.geometry(f"+{x}+{y}")
+
             popup.transient(self.root)  # Mantener sobre la ventana principal
             popup.grab_set()  # Bloquear interacción con la ventana principal
 
@@ -3483,7 +3491,7 @@ class TinyMQGUI:
 
         except Exception as e:
             print(f"Error mostrando notificación de sensor: {e}")
-
+        
     def on_connection_state_changed(self, connected: bool):
         """
         Callback para manejar cambios de estado de conexión.
