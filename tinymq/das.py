@@ -340,7 +340,7 @@ class DataAcquisitionService:
             "running": self.running,
             "port": self.serial_port,
             "baud_rate": self.baud_rate,
-            "total_readings": self.total_readings_received,
+            "readings_received": self.total_readings_received,  # <- Cambiado aquí
             "callbacks_registered": len(self.on_data_received_callbacks)
         }
 

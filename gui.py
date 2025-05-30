@@ -35,7 +35,6 @@ class TinyMQGUI:
 
         self.update_thread = threading.Thread(target=self.update_data_loop, daemon=True)
         self.update_thread.start()
-    
 
     def on_admin_result(self, result_data):
         """Maneja los resultados de solicitudes administrativas."""
@@ -104,31 +103,23 @@ class TinyMQGUI:
         self.readings_label.pack(side="right", padx=10)
 
     def on_tab_changed(self, event):
-        """Maneja el cambio de pestañas."""
         tab_id = self.notebook.select()
         tab_text = self.notebook.tab(tab_id, "text")
-        
-        # Mostrar pestaña seleccionada en barra de estado
         self.status_label.config(text=f"Pestaña seleccionada: {tab_text}")
-        
-        # Si se seleccionó la pestaña de administración, esperar a que se seleccione una sub-pestaña
-        # en lugar de actualizar todas las sub-pestañas a la vez
+
         if tab_text == "Administración":
-            # Solo actualizar la sub-pestaña que está visible actualmente
             current_subtab = self.admin_notebook.index("current") 
-            if current_subtab == 0:  # Pendientes
+            if current_subtab == 0:
                 self.refresh_admin_requests()
-            elif current_subtab == 1:  # Mis Tópicos
+            elif current_subtab == 1:
                 self.refresh_my_topics_admin()
-            elif current_subtab == 2:  # Solicitar
+            elif current_subtab == 2:
                 self.refresh_my_subscriptions_for_admin()
                 self.refresh_my_admin_requests_status()
-            
-            # Actualizar el badge de notificaciones (esto es ligero)
             self._update_admin_tab_badge()
-        
-        # Ajustar las acciones específicas para otras pestañas
-        if tab_text == "Dashboard":
+
+        # Refrescar dashboard solo al cambiar a esa pestaña
+        if tab_text == "Inicio":
             self.refresh_stats()
         elif tab_text == "Sensores":
             self.refresh_sensors()
@@ -208,6 +199,8 @@ class TinyMQGUI:
         self.stats_text.pack(fill="both", expand=True, padx=5, pady=5)
         self.stats_text.config(state="disabled")
         ttk.Button(stats_frame, text="Refrescar", command=self.refresh_stats).pack(pady=5)
+        
+        self.refresh_stats()  # Cargar estadísticas al inicio
 
     def create_sensors_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -351,13 +344,18 @@ class TinyMQGUI:
         # Lista de tópicos con selección múltiple
         left = ttk.LabelFrame(main_frame, text="Tópicos")
         left.pack(side="left", fill="y", padx=(0, 10))
-        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED)  # Cambio aquí para permitir selección múltiple
+        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED)
         self.topics_listbox.pack(fill="y", expand=True, padx=5, pady=5)
         self.topics_listbox.bind('<<ListboxSelect>>', self.on_topic_selected)
         ttk.Button(left, text="Refrescar", command=self.refresh_topics).pack(fill="x", padx=5, pady=5)
-        # Botón para crear tópico
-        ttk.Button(left, text="Crear Tópico", command=self.open_create_topic_dialog).pack(fill="x", padx=5, pady=5)
 
+        # Botón para crear tópico SOLO si está conectado
+        def open_create_topic_dialog_guarded():
+            if not self.client or not self.client.connected:
+                messagebox.showwarning("No conectado", "Debes conectarte al broker antes de crear un tópico.")
+                return
+            self.open_create_topic_dialog()
+        ttk.Button(left, text="Crear Tópico", command=open_create_topic_dialog_guarded).pack(fill="x", padx=5, pady=5)
 
         # Detalles y acciones
         right = ttk.LabelFrame(main_frame, text="Detalles")
@@ -395,11 +393,8 @@ class TinyMQGUI:
         self.sensor_combo.pack(side="left", padx=5, expand=True, fill="x")
         ttk.Button(add_frame, text="Agregar", command=self.add_sensor_to_topic).pack(side="left", padx=5)
         ttk.Button(add_frame, text="Eliminar", command=self.remove_sensor_from_topic).pack(side="left", padx=5)
-
-        ttk.Button(add_frame, text="Marcar como Activable", 
-                command=self.mark_sensor_as_activable).pack(side="left", padx=5)
-        
-
+        ttk.Button(add_frame, text="Marcar como Activable", command=self.mark_sensor_as_activable).pack(side="left", padx=5)
+            
     def open_create_topic_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Crear nuevo tópico")
@@ -423,6 +418,11 @@ class TinyMQGUI:
         ttk.Button(button_frame, text="Cancelar", command=dialog.destroy).pack(side="left", padx=5)
 
         def on_create():
+          
+            if not self.client or not self.client.connected:
+                messagebox.showwarning("No conectado", "Debes conectarte al broker antes de crear un tópico.", parent=dialog)
+                return
+
             name = name_var.get().strip()
             publish = publish_var.get()
             if not name:
