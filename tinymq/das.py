@@ -3,6 +3,7 @@ import serial  # Librería para comunicación serial
 import threading
 import time
 import json
+import serial.tools.list_ports
 
 from .db import Database
 
@@ -28,16 +29,51 @@ class DataAcquisitionService:
         self.serial_conn: Optional[serial.Serial] = None
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        
+        # Atributos para manejar reconexión con detección USB
+        self.retry_thread: Optional[threading.Thread] = None
+        self.retry_running = False
 
         self.on_data_received_callbacks: List[Callable[[str, Any], None]] = []
         self.total_readings_received = 0
 
-    def start(self) -> bool:
-        """Inicia el servicio de adquisición de datos desde el puerto serial."""
+    def start(self, retry=True) -> bool:
+        """
+        Inicia el servicio de adquisición de datos desde el puerto serial.
+        
+        Args:
+            retry: Si debe reintentar automáticamente la conexión en caso de fallo
+            
+        Returns:
+            bool: True si se conectó exitosamente, False si falló la conexión inicial
+        """
         if self.running:
             return True
-
+        
+        # Intentar conectar una vez
+        success = self._connect()
+        
+        # Si falló y queremos reintentar, iniciar thread de monitoreo de USB
+        if not success and retry:
+            self._start_usb_monitor()
+            
+        return success
+            
+    def _connect(self) -> bool:
+        """
+        Intenta establecer una conexión con el puerto serial.
+        
+        Returns:
+            bool: True si se conectó correctamente, False en caso contrario
+        """
         try:
+            # Verificar si el puerto existe antes de intentar conectar
+            available_ports = [port.device for port in serial.tools.list_ports.comports()]
+            if self.serial_port not in available_ports:
+                if self.verbose:
+                    print(f"❌ DAS: Puerto {self.serial_port} no disponible. Puertos disponibles: {available_ports}")
+                return False
+            
             # Iniciar conexión serial
             self.serial_conn = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
             time.sleep(2)  # Dar tiempo al ESP32 para inicializarse
@@ -52,9 +88,15 @@ class DataAcquisitionService:
         except Exception as e:
             print(f"❌ DAS: Error iniciando servicio: {e}")
             return False
-
+    
     def stop(self) -> None:
-        """Detiene el servicio de adquisición de datos."""
+        """Detiene el servicio de adquisición de datos y el monitoreo USB."""
+        # Detener monitoreo USB
+        self.retry_running = False
+        if self.retry_thread and self.retry_thread.is_alive():
+            self.retry_thread.join(timeout=1.0)
+            
+        # Detener servicio principal
         if not self.running:
             return
             
@@ -70,7 +112,68 @@ class DataAcquisitionService:
             self.serial_conn = None
             
         print("✅ DAS: Servicio detenido")
-    
+            
+    def _start_usb_monitor(self) -> None:
+        """Inicia el monitoreo de dispositivos USB para detectar reconexiones."""
+        if self.retry_running:
+            return
+            
+        self.retry_running = True
+        self.retry_thread = threading.Thread(target=self._usb_monitor)
+        self.retry_thread.daemon = True
+        self.retry_thread.start()
+        print(f"🔌 DAS: Monitoreando conexiones USB para puerto {self.serial_port}")
+        
+    def _usb_monitor(self) -> None:
+        """
+        Monitorea la disponibilidad del puerto USB y reintenta la conexión
+        SOLO cuando se detecta un nuevo dispositivo USB.
+        """
+        last_ports = set()
+        
+        # Obtener puertos iniciales
+        try:
+            last_ports = set(port.device for port in serial.tools.list_ports.comports())
+            print(f"🔌 DAS: Puertos iniciales detectados: {last_ports}")
+        except:
+            pass
+        
+        print("🔌 DAS: Esperando nuevos dispositivos USB...")
+        
+        while self.retry_running and not self.running:
+            try:
+                # Obtener puertos actuales
+                current_ports = set(port.device for port in serial.tools.list_ports.comports())
+                
+                # Detectar SOLO si se agregaron nuevos puertos
+                new_ports = current_ports - last_ports
+                
+                if new_ports:
+                    print(f"🔌 DAS: Nuevos dispositivos USB detectados: {new_ports}")
+                    
+                    # Solo intentar conectar cuando hay nuevos USBs
+                    if self._connect():
+                        self.retry_running = False
+                        print("✅ DAS: Reconexión exitosa")
+                        break
+                    else:
+                        print("❌ DAS: Falló conexión con nuevos dispositivos")
+                
+                # Actualizar lista de puertos para la próxima comparación
+                last_ports = current_ports
+                
+                # Esperar un poco antes de verificar nuevamente (pero NO para reintentar)
+                time.sleep(1)  # Solo 1 segundo para verificar cambios USB
+                    
+            except Exception as e:
+                if self.verbose:
+                    print(f"❌ DAS: Error en monitoreo USB: {e}")
+                time.sleep(1)
+                
+        if self.retry_running and not self.running:
+            print("ℹ️ DAS: Monitoreo USB finalizado sin éxito")
+        self.retry_running = False
+        
     def send_command(self, command: Dict) -> bool:
         """
         Envía un comando al ESP32.
