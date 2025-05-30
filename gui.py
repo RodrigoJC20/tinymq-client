@@ -908,6 +908,7 @@ class TinyMQGUI:
            
                 self.client.register_admin_result_handler(self.on_admin_result)
                 self.client.register_sensor_status_callback(self.show_sensor_notification)
+                self.client.register_admin_notification_handler(self.on_admin_notify_message)
                 
                 # AÑADIR ESTA LÍNEA para suscribirse a las notificaciones de control de sensores
                 if self.das and self.das.running:
@@ -938,22 +939,21 @@ class TinyMQGUI:
             self.status_label.config(text="No se pudo conectar al broker")
             messagebox.showerror("Error", "No se pudo conectar al broker")
 
-    def on_admin_notify_message(self, topic_str, payload):
+    def on_admin_notify_message(self, notification_data):
         """Procesa notificaciones administrativas recibidas por publicación."""
         try:
-            if not payload:
+            if not notification_data:
                 return
-                
-            print(f"📢 Notificación admin recibida en {topic_str}: {payload}")
-            data = json.loads(payload.decode('utf-8'))
-            
+    
+            print(f"📢 Notificación admin recibida: {notification_data}")
+    
             # Verificar si es un comando de sensor
-            if isinstance(data, dict) and data.get("command") == "set_sensor":
-                sensor_name = data.get("sensor_name")
-                active = data.get("active")
-                
+            if isinstance(notification_data, dict) and notification_data.get("command") == "set_sensor":
+                sensor_name = notification_data.get("sensor_name")
+                active = notification_data.get("active")
+    
                 print(f"🔄 Procesando comando remoto: {sensor_name}={active}")
-                
+    
                 # Enviar al ESP32 a través del DAS
                 if self.das and self.das.running:
                     cmd = {

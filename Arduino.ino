@@ -15,8 +15,9 @@
 #define BUTTON_PIN 5
 #define MOTOR_PIN1 19
 #define MOTOR_PIN2 18
-#define TRIG_PIN 12
-#define ECHO_PIN 13
+#define LIGHT_RELAY_PIN 27 // Pin para controlar la luz (puedes cambiarlo si usas otro pin)
+// #define TRIG_PIN 12
+// #define ECHO_PIN 13
 
 // Variables
 dht11 DHT11;
@@ -57,20 +58,9 @@ void setFan(bool on)
   }
 }
 
-int readDistance()
-{
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+// --- Eliminado readDistance() ---
 
-  long duration = pulseIn(ECHO_PIN, HIGH);
-  int distance = duration / 58;
-  return distance;
-}
-
-void sendAllSensorData(float temp, float humidity, int light, int fan, int distance)
+void sendAllSensorData(float temp, float humidity, int light, int fan)
 {
   unsigned long timestamp = millis() / 1000;
 
@@ -78,8 +68,7 @@ void sendAllSensorData(float temp, float humidity, int light, int fan, int dista
   json += "{\"name\":\"temperature\",\"value\":" + String(temp) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"C\"},";
   json += "{\"name\":\"humidity\",\"value\":" + String(humidity) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"%\"},";
   json += "{\"name\":\"light\",\"value\":" + String(light) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"%\"},";
-  json += "{\"name\":\"fan\",\"value\":" + String(fan) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"\"},";
-  json += "{\"name\":\"distance\",\"value\":" + String(distance) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"cm\"}";
+  json += "{\"name\":\"fan\",\"value\":" + String(fan) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"\"}";
   json += "]\n";
 
   Serial.println(json);
@@ -129,6 +118,12 @@ void processSerialCommand()
         forceSetFan(value == 1);
         Serial.printf("{\"result\":\"fan set to %d\"}\n", value);
       }
+      else if (strcmp(command, "set_led") == 0) // Control de la luz
+      {
+        int value = doc["value"] | 0;
+        digitalWrite(LIGHT_RELAY_PIN, value ? HIGH : LOW);
+        Serial.printf("{\"result\":\"light set to %d\"}\n", value);
+      }
     }
   }
 }
@@ -139,8 +134,9 @@ void setup()
 
   pinMode(LIGHT_SENSOR_PIN, INPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(LIGHT_RELAY_PIN, OUTPUT);   // ✅ CONFIGURAR EL PIN 21
+  digitalWrite(LIGHT_RELAY_PIN, LOW); // ✅ LUZ APAGADA POR DEFECTO
 
   setupMotor();
   fanState = false;
@@ -150,7 +146,7 @@ void setup()
 
 void loop()
 {
-  processSerialCommand(); // <-- Agrega esta línea al inicio del loop
+  processSerialCommand();
 
   bool currentButtonState = digitalRead(BUTTON_PIN);
   if (lastButtonState == HIGH && currentButtonState == LOW)
@@ -165,22 +161,4 @@ void loop()
     }
   }
   lastButtonState = currentButtonState;
-
-  int distance = readDistance();
-  if (distance <= 7)
-  {
-    if (!fanState)
-    {
-      setFan(true);
-      Serial.println("Object detected, turning fan ON");
-    }
-  }
-  else
-  {
-    if (fanState)
-    {
-      setFan(false);
-      Serial.println("No object detected, turning fan OFF");
-    }
-  }
 }
