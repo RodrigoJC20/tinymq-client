@@ -203,7 +203,6 @@ class DataAcquisitionService:
             print(f"❌ DAS: Error enviando comando: {e}")
             return False
     
-   # ...existing code...
     def _read_serial_data(self) -> None:
         """Función principal de lectura de datos seriales. Corre en un thread separado."""
         try:
@@ -257,7 +256,7 @@ class DataAcquisitionService:
                 print(f"❌ DAS: Error en thread de lectura: {e}")
         finally:
             print("ℹ️ DAS: Thread de lectura finalizado")
-    # ...existing code...
+
     def _process_data(self, data: bytes) -> int:
         """
         Procesa los datos recibidos del ESP32.

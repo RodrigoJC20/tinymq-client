@@ -1179,6 +1179,7 @@ class TinyMQGUI:
             if selected_topic_name:
                 for i in range(self.topics_listbox.size()):
                     item = self.topics_listbox.get(i)
+                    # Buscar por nombre exacto
                     if f": {selected_topic_name} " in item or item.endswith(f": {selected_topic_name} [✓]") or item.endswith(f": {selected_topic_name} [ ]"):
                         self.topics_listbox.selection_set(i)
                         self.topics_listbox.see(i)
@@ -1190,7 +1191,7 @@ class TinyMQGUI:
             self.status_label.config(text=f"Se encontraron {len(topics)} tópicos")
         except Exception as e:
             messagebox.showerror("Error", f"Error al refrescar tópicos: {str(e)}")
-
+            
     def on_topic_selected(self, event):
         selection = self.topics_listbox.curselection()
         if not selection:
