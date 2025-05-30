@@ -3049,6 +3049,15 @@ class TinyMQGUI:
                 else:
                     print(f"⚠️ No hay DAS configurado o no está funcionando")
                 return
+            
+            notification_type = data.get("type")
+            if notification_type == "request":
+                topic_name = data.get("topic_name", "")
+                requester_id = data.get("requester_id", "")
+                msg = f"Has recibido una nueva solicitud de administración para el tópico '{topic_name}' de '{requester_id}'."
+                self.show_admin_notification("Nueva solicitud de administración", msg)
+                return
+
                 
             # Resto del código existente para otros tipos de notificaciones
             notification_type = data.get("type")
