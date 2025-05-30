@@ -706,17 +706,6 @@ class TinyMQGUI:
         except Exception as e:
                 messagebox.showerror("Error", f"Error al publicar el mensaje: {e}")
         
-    def refresh_subscriptions(self):
-            try:
-                subscriptions = self.db.get_subscriptions()
-                self.subscriptions_listbox.delete(0, tk.END)
-                for sub in subscriptions:
-                    self.subscriptions_listbox.insert(tk.END, f"{sub['id']}: {sub['topic']} ({sub['source_client_id']})")
-                self.status_label.config(text=f"Se encontraron {len(subscriptions)} suscripciones")
-                # NUEVO: refrescar lista de tópicos públicos
-                self.refresh_public_topics()
-            except Exception as e:
-                messagebox.showerror("Error", f"Error al refrescar suscripciones: {str(e)}")
 
     def refresh_public_topics(self):
         """Obtiene los tópicos públicos directamente del broker"""
@@ -1031,7 +1020,12 @@ class TinyMQGUI:
     def update_metadata(self):
         name = self.name_var.get().strip()
         email = self.email_var.get().strip()
-        
+
+        # Validar que no estén vacíos
+        if not name or not email:
+            messagebox.showerror("Error", "El nombre y el email no pueden estar vacíos.")
+            return
+
         # Verificar si está conectado
         if self.client and self.client.connected:
             respuesta = messagebox.askyesno("Atención", 
@@ -1047,7 +1041,7 @@ class TinyMQGUI:
             except Exception as e:
                 messagebox.showerror("Error", f"Error al desconectar: {str(e)}")
                 return
-        
+
         metadata = self.db.get_client_metadata()
         if name:
             metadata["name"] = name
@@ -1090,8 +1084,11 @@ class TinyMQGUI:
         try:
             sensors = self.db.get_sensors()
             self.sensors_listbox.delete(0, tk.END)
-            for sensor in sensors:
-                self.sensors_listbox.insert(tk.END, f"{sensor['id']}: {sensor['name']}")
+            if not sensors:
+                self.sensors_listbox.insert(tk.END, "Sin sensores registrados")
+            else:
+                for sensor in sensors:
+                    self.sensors_listbox.insert(tk.END, f"{sensor['id']}: {sensor['name']}")
             self.status_label.config(text=f"Se encontraron {len(sensors)} sensores")
         except Exception as e:
             messagebox.showerror("Error", f"Error al refrescar sensores: {str(e)}")
@@ -1159,10 +1156,13 @@ class TinyMQGUI:
             topics = self.db.get_topics()
             self.topics_listbox.delete(0, tk.END)
             topic_names = []
-            for topic in topics:
-                status = "✓" if topic["publish"] else " "
-                self.topics_listbox.insert(tk.END, f"{topic['id']}: {topic['name']} [{status}]")
-                topic_names.append(topic['name'])
+            if not topics:
+                self.topics_listbox.insert(tk.END, "Sin tópicos registrados")
+            else: 
+                for topic in topics:
+                    status = "✓" if topic["publish"] else " "
+                    self.topics_listbox.insert(tk.END, f"{topic['id']}: {topic['name']} [{status}]")
+                    topic_names.append(topic['name'])
             sensors = self.db.get_sensors()
             sensor_names = [s["name"] for s in sensors]
             self.sensor_combo['values'] = sensor_names
@@ -1354,15 +1354,24 @@ class TinyMQGUI:
         
         self.on_topic_selected(None)
 
-
-        
     def refresh_subscriptions(self):
         try:
+            # Si no hay conexión, solo limpiar la lista y mostrar mensaje informativo
+            if not self.client or not self.client.connected:
+                self.subscriptions_listbox.delete(0, tk.END)
+                self.subscriptions_listbox.insert(tk.END, "Sin suscripciones activas")
+                self.status_label.config(text="No hay conexión con el broker")
+                return
+
             subscriptions = self.db.get_subscriptions()
             self.subscriptions_listbox.delete(0, tk.END)
-            for sub in subscriptions:
-                self.subscriptions_listbox.insert(tk.END, f"{sub['id']}: {sub['topic']} ({sub['source_client_id']})")
+            if not subscriptions:
+                self.subscriptions_listbox.insert(tk.END, "Sin suscripciones activas")
+            else:
+                for sub in subscriptions:
+                    self.subscriptions_listbox.insert(tk.END, f"{sub['id']}: {sub['topic']} ({sub['source_client_id']})")
             self.status_label.config(text=f"Se encontraron {len(subscriptions)} suscripciones")
+            self.refresh_public_topics()
         except Exception as e:
             messagebox.showerror("Error", f"Error al refrescar suscripciones: {str(e)}")
 
@@ -1630,9 +1639,9 @@ class TinyMQGUI:
 
     def create_subscription_callback(self, topic, source_client):
         def callback(topic_str, message):
+            if not self.is_window_alive():
+                return
             try:
-                #print(f"\n👉 RECIBIDO mensaje en tópico: '{topic_str}'")
-                # Convertir mensaje a string si es bytes
                 message_str = message.decode('utf-8') if isinstance(message, bytes) else str(message)
                 timestamp = int(time.time())
                 
@@ -2490,7 +2499,7 @@ class TinyMQGUI:
         toolbar = ttk.Frame(left_frame)
         toolbar.pack(fill="x", padx=5, pady=5)
         
-        ttk.Button(toolbar, text="Actualizar Lista", command=self.refresh_admin_requests).pack(side="left", padx=5)
+        ttk.Button(toolbar, text="Actualizar Solicitudes", command=self.on_update_admin_requests).pack(side="left", padx=5)
         ttk.Label(toolbar, text="Seleccione una solicitud para ver detalles").pack(side="right", padx=5)
         
         # Lista de solicitudes con TreeView
@@ -2703,11 +2712,11 @@ class TinyMQGUI:
         
         ttk.Button(main_frame, text="Revocar Admin", 
                 command=self.revoke_topic_admin_privilege, padding=5).pack(side="bottom", padx=5, pady=5, anchor="w")
-                
+                    
     def refresh_my_topics_admin(self):
         """Actualiza la lista de mis tópicos en la pestaña de administración."""
         if not self.client or not self.client.connected:
-            #messagebox.showwarning("Advertencia", "No estás conectado al broker")
+            messagebox.showwarning("Advertencia", "No estás conectado al broker")
             return
 
         try:
@@ -2725,14 +2734,46 @@ class TinyMQGUI:
                 admin = topic.get("admin_client_id", "Sin administrador")
                 if admin == "":
                     admin = "Sin administrador"
-                created = topic.get("created_at", "").split("T")[0] if topic.get("created_at") else ""
-                
+                created_raw = topic.get("created_at", "")
+                created = ""
+                if created_raw:
+                    try:
+                        from datetime import datetime
+                        # Si es timestamp numérico
+                        if isinstance(created_raw, (int, float)) or (isinstance(created_raw, str) and created_raw.isdigit()):
+                            created_dt = datetime.fromtimestamp(int(float(created_raw)))
+                            created = created_dt.strftime("%d/%m/%Y")
+                        # Si es string tipo ISO
+                        elif "T" in created_raw:
+                            # Quitar zona si existe
+                            iso = created_raw.split("T")[0]
+                            # Si tiene formato completo, parsear
+                            try:
+                                created_dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                                created = created_dt.strftime("%d/%m/%Y")
+                            except Exception:
+                                # Si falla, solo mostrar la parte de la fecha
+                                created = iso.replace("-", "/")
+                                               # Si es string pero no ISO ni timestamp, intentar extraer la fecha
+                        try:
+                            # Buscar patrón de fecha al inicio del string
+                            import re
+                            match = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(created_raw))
+                            if match:
+                                # Formatear como dd/mm/yyyy
+                                created = f"{match.group(3)}/{match.group(2)}/{match.group(1)}"
+                            else:
+                                created = str(created_raw)
+                        except Exception:
+                            created = str(created_raw)
+                    except Exception:
+                        created = str(created_raw)
                 self.my_topics_admin_tree.insert("", "end", values=(name, status, admin, created))
-            
             
         except Exception as e:
             messagebox.showerror("Error", f"Error al obtener mis tópicos: {str(e)}")
-
+        
+        
     def on_my_topic_admin_selected(self, event):
         """Maneja la selección de un tópico en la lista de administración."""
         selection = self.my_topics_admin_tree.selection()
@@ -2819,30 +2860,38 @@ class TinyMQGUI:
         self.req_topic_var.set(values[2])
         self.req_time_var.set(values[3])
         
-   
-    
-    def refresh_admin_requests(self):
-        """Actualiza la lista de solicitudes de administración pendientes."""
+
+    def on_update_admin_requests(self):
+        """Callback para el botón 'Actualizar Lista' en la pestaña de administración."""
         if not self.client or not self.client.connected:
             messagebox.showwarning("No conectado", "Debe conectarse primero al broker")
             return
+        self.refresh_admin_requests()
+
+    def refresh_admin_requests(self):
+        """Actualiza la lista de solicitudes de administración pendientes."""
+        if not self.client or not self.client.connected:
+            # Solo limpiar la lista y mostrar mensaje informativo, sin popup
+            self.requests_tree.delete(*self.requests_tree.get_children())
+            self.requests_tree.insert('', 'end', values=("Sin solicitudes pendientes", "", "", ""))
+            self.status_label.config(text="No hay conexión con el broker")
+            return
             
         self.requests_tree.delete(*self.requests_tree.get_children())
-        
         try:
             # Obtener solicitudes pendientes
             requests = self.client.get_pending_admin_requests()
             
             if not requests:
+                self.requests_tree.insert('', 'end', values=("Sin solicitudes pendientes", "", "", ""))
                 return
-    
-                
+
             # Agregar cada solicitud al árbol
             for req in requests:
                 # Extraer el ID de solicitud
                 req_id = req.get('id', 'N/A')
-                
-                # Extraer ID del solicitante 
+
+                # Extraer ID del solicitante
                 requester_id = req.get('requester_id', req.get('requester_client_id', 'Desconocido'))
                 
                 # Extraer nombre del tópico - puede venir de diferentes formas según JOIN SQL
@@ -3218,7 +3267,8 @@ class TinyMQGUI:
                 messagebox.showwarning("No conectado", "Debes conectarte al broker primero")
                 
         except Exception as e:
-            messagebox.showerror("Error", f"Error al solicitar administración: {str(e)}")         
+            messagebox.showerror("Error", f"Error al solicitar administración: {str(e)}")     
+                
     def refresh_subscribable_topics(self):
         """Actualiza la lista de tópicos disponibles para solicitar administración"""
         try:
@@ -3437,18 +3487,38 @@ class TinyMQGUI:
         # Schedule UI update in the main thread
         self.root.after(0, update_ui)
 
+    def is_window_alive(self):
+        try:
+            return bool(self.root.winfo_exists())
+        except:
+            return False
+
 def main():
     root = tk.Tk()
     app = TinyMQGUI(root)
     def on_closing():
         app.running = False
-        if app.das:
-            app.das.stop()
-        if app.client and app.client.connected:
-            app.client.disconnect()
+        try:
+            if app.das:
+                try:
+                    app.das.stop()
+                except Exception:
+                    pass  # Ignorar cualquier error al detener DAS
+            if app.client and app.client.connected:
+                try:
+                    app.client.disconnect()
+                except Exception:
+                    pass  # Ignorar cualquier error al desconectar
+        except Exception:
+            pass
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", on_closing)
-    root.mainloop()
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        # Permitir cerrar con Ctrl+C sin traceback feo
+        print("Cerrando aplicación por KeyboardInterrupt...")
+        on_closing()
 
 
 if __name__ == "__main__":
