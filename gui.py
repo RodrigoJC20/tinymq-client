@@ -39,6 +39,8 @@ class TinyMQGUI:
     def on_admin_result(self, result_data):
         """Maneja los resultados de solicitudes administrativas."""
         try:
+                
+            
             if result_data.get('__admin_revoked', False):
                 # Notificación de revocación de privilegios
                 topic_name = result_data.get('topic_name', '')
@@ -903,10 +905,10 @@ class TinyMQGUI:
                 print(f"📢 Suscribiéndose a notificaciones administrativas: {admin_topic}")
                 self.client.subscribe(admin_topic, self.on_admin_notify_message)
                 
-                # Registrar callbacks para notificaciones administrativas
-                self.client.register_admin_notification_handler(self.on_admin_notification)
+           
                 self.client.register_admin_result_handler(self.on_admin_result)
                 self.client.register_sensor_status_callback(self.show_sensor_notification)
+                self.setup_admin_notifications() 
                 
                 # AÑADIR ESTA LÍNEA para suscribirse a las notificaciones de control de sensores
                 if self.das and self.das.running:
@@ -3118,28 +3120,20 @@ class TinyMQGUI:
             messagebox.showerror("Error", "No se pudo enviar la solicitud")
 
     def setup_admin_notifications(self):
-        """Configura las notificaciones para administración."""
         print("🔧 [GUI DEBUG] Configurando notificaciones administrativas...")
         if self.client and self.client.connected:
             print("✅ [GUI DEBUG] Cliente conectado, registrando handler...")
-            
             def admin_callback(notification):
                 print(f"🎯 [GUI CALLBACK] Notificación recibida: {notification}")
-                # Ejecutar en el hilo principal de Tkinter
                 self.root.after(0, lambda: self.on_admin_notification(notification))
-            
             result = self.client.register_admin_notification_handler(admin_callback)
             print(f"🔧 [GUI DEBUG] Resultado del registro: {result}")
-            
-            if result:
-                print("✅ [GUI DEBUG] Notificaciones configuradas correctamente")
-            else:
-                print("❌ [GUI DEBUG] Error configurando notificaciones")
-                
         else:
             print("❌ [GUI DEBUG] Cliente no conectado")
 
     def on_admin_notification(self, data):
+        print("🔔 [GUI NOTIFICATION] Notificación administrativa recibida")
+        
         """Maneja notificaciones administrativas recibidas."""
         try:
             print(f"🔔 [GUI NOTIFICATION] Procesando notificación: {data}")
@@ -3192,6 +3186,7 @@ class TinyMQGUI:
             traceback.print_exc()
         
     def show_admin_notification(self, title, message):
+        
         """Muestra una ventana de notificación flotante."""
         # Crear ventana flotante
         popup = tk.Toplevel(self.root)
