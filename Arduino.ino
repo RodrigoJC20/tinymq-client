@@ -6,7 +6,6 @@
  */
 
 #include <dht11.h>
-#include <ESP32_Servo.h>
 #include <time.h>
 #include <ArduinoJson.h> // Asegúrate de instalar la librería ArduinoJson
 
@@ -18,14 +17,11 @@
 #define MOTOR_PIN2 18
 #define TRIG_PIN 12
 #define ECHO_PIN 13
-#define SERVO_PIN 26
 
 // Variables
 dht11 DHT11;
-Servo myservo;
 
 bool fanState = false;
-bool servoOpen = false;
 bool lastButtonState = HIGH;
 unsigned long lastSensorTime = 0;
 const unsigned long sensorInterval = 2000;
@@ -74,7 +70,7 @@ int readDistance()
   return distance;
 }
 
-void sendAllSensorData(float temp, float humidity, int light, int fan, int distance, int servo)
+void sendAllSensorData(float temp, float humidity, int light, int fan, int distance)
 {
   unsigned long timestamp = millis() / 1000;
 
@@ -83,8 +79,7 @@ void sendAllSensorData(float temp, float humidity, int light, int fan, int dista
   json += "{\"name\":\"humidity\",\"value\":" + String(humidity) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"%\"},";
   json += "{\"name\":\"light\",\"value\":" + String(light) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"%\"},";
   json += "{\"name\":\"fan\",\"value\":" + String(fan) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"\"},";
-  json += "{\"name\":\"distance\",\"value\":" + String(distance) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"cm\"},";
-  json += "{\"name\":\"servo\",\"value\":" + String(servo) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"\"}";
+  json += "{\"name\":\"distance\",\"value\":" + String(distance) + ",\"timestamp\":" + String(timestamp) + ",\"units\":\"cm\"}";
   json += "]\n";
 
   Serial.println(json);
@@ -108,7 +103,6 @@ void forceSetFan(bool on)
   }
 }
 
-// REEMPLAZAR LA FUNCIÓN processSerialCommand
 void processSerialCommand()
 {
   if (Serial.available())
@@ -135,34 +129,6 @@ void processSerialCommand()
         forceSetFan(value == 1);
         Serial.printf("{\"result\":\"fan set to %d\"}\n", value);
       }
-      else if (strcmp(command, "set_servo") == 0)
-      {
-        int value = doc["value"] | 0;
-        bool previousFanState = fanState;
-
-        // GUARDAR ESTADO DE PINES DEL VENTILADOR
-        int previousPwmValue = ledcRead(2);
-
-        // MOVER SERVO
-        if (value == 1)
-        {
-          myservo.write(80);
-          servoOpen = true;
-        }
-        else
-        {
-          myservo.write(180);
-          servoOpen = false;
-        }
-
-        // ESPERAR A QUE EL SERVO TERMINE DE MOVERSE
-        delay(200);
-
-        // RESTAURAR ESTADO DEL VENTILADOR FORZADAMENTE
-        forceSetFan(previousFanState);
-
-        Serial.printf("{\"result\":\"servo set to %d\"}\n", value);
-      }
     }
   }
 }
@@ -178,9 +144,6 @@ void setup()
 
   setupMotor();
   fanState = false;
-
-  myservo.attach(SERVO_PIN);
-  myservo.write(180);
 
   setFan(false);
 }
@@ -206,44 +169,18 @@ void loop()
   int distance = readDistance();
   if (distance <= 7)
   {
-    if (!servoOpen)
+    if (!fanState)
     {
-      bool previousFanState = fanState;
-
-      // GUARDAR ESTADO DE PINES DEL VENTILADOR
-      int previousPwmValue = ledcRead(2);
-
-      // MOVER SERVO
-      myservo.write(80);
-      servoOpen = true;
-      Serial.println("Object detected, opening servo");
-
-      // ESPERAR A QUE EL SERVO TERMINE DE MOVERSE
-      delay(200);
-
-      // RESTAURAR VENTILADOR FORZADAMENTE
-      forceSetFan(previousFanState);
+      setFan(true);
+      Serial.println("Object detected, turning fan ON");
     }
   }
   else
   {
-    if (servoOpen)
+    if (fanState)
     {
-      bool previousFanState = fanState;
-
-      // GUARDAR ESTADO DE PINES DEL VENTILADOR
-      int previousPwmValue = ledcRead(2);
-
-      // MOVER SERVO
-      myservo.write(180);
-      servoOpen = false;
-      Serial.println("No object detected, closing servo");
-
-      // ESPERAR A QUE EL SERVO TERMINE DE MOVERSE
-      delay(200);
-
-      // RESTAURAR VENTILADOR FORZADAMENTE
-      forceSetFan(previousFanState);
+      setFan(false);
+      Serial.println("No object detected, turning fan OFF");
     }
   }
 }
