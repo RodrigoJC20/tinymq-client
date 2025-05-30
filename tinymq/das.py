@@ -13,7 +13,7 @@ class DataAcquisitionService:
     Data Acquisition Service for TinyMQ client using Serial communication.
     """
 
-    def __init__(self, db: Database, serial_port: str = "COM8", baud_rate: int = 115200, verbose: bool = False):
+    def __init__(self, db: Database, serial_port: str = "COM7", baud_rate: int = 115200, verbose: bool = False):
         """
         Args:
             db: Instancia de la base de datos
@@ -203,37 +203,61 @@ class DataAcquisitionService:
             print(f"❌ DAS: Error enviando comando: {e}")
             return False
     
+   # ...existing code...
     def _read_serial_data(self) -> None:
         """Función principal de lectura de datos seriales. Corre en un thread separado."""
         try:
             buffer = ""
-            while self.running and self.serial_conn:
+            was_disconnected = False
+            while self.running:
                 try:
-                    # Leer un byte del puerto serial
+                    if not self.serial_conn or not self.serial_conn.is_open:
+                        if not was_disconnected:
+                            was_disconnected = True
+                        time.sleep(0.5)
+                        continue
+
+                    if was_disconnected:
+                        print(f"✅ DAS: Reconexión serial exitosa en {self.serial_port}")
+                        was_disconnected = False
+
                     byte = self.serial_conn.read(1)
                     if not byte:
                         continue
-                    
+
                     char = byte.decode('utf-8')
                     buffer += char
-                    
-                    # Si encontramos un salto de línea, procesar la línea
+
                     if char == '\n':
                         data_read = self._process_data(buffer.encode('utf-8'))
                         buffer = ""
-                        
+
                         if data_read > 0:
                             self.total_readings_received += data_read
+                except (serial.SerialException, OSError, PermissionError) as e:
+                    print(f"⚠️ DAS: Conexión serial perdida: {e}")
+                    if self.serial_conn:
+                        try:
+                            self.serial_conn.close()
+                        except:
+                            pass
+                        self.serial_conn = None
+                    was_disconnected = True
+                    # Detener el servicio para permitir que el monitor USB actúe
+                    self.running = False
+                    # Iniciar el monitor USB si no está corriendo
+                    if not self.retry_running:
+                        self._start_usb_monitor()
+                    break  # Salir del loop para terminar el thread de lectura
                 except UnicodeDecodeError:
-                    # Ignorar errores de decodificación
                     buffer = ""
                     continue
         except Exception as e:
-            if self.running:  # Solo mostrar error si todavía debería estar corriendo
+            if self.running:
                 print(f"❌ DAS: Error en thread de lectura: {e}")
         finally:
             print("ℹ️ DAS: Thread de lectura finalizado")
-            
+    # ...existing code...
     def _process_data(self, data: bytes) -> int:
         """
         Procesa los datos recibidos del ESP32.
