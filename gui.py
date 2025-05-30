@@ -3459,39 +3459,23 @@ class TinyMQGUI:
             messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' marcado como activable en '{topic_name}'")
         else:
             messagebox.showerror("Error", "No se pudo marcar el sensor como activable")
-
+            
     def show_sensor_notification(self, sensor_data):
-        """Muestra una notificación simple cuando cambia el estado de un sensor."""
+        """Muestra una notificación simple utilizando un messagebox."""
         try:
             sensor_name = sensor_data.get("sensor_name", "desconocido")
             active = sensor_data.get("active", False)
             estado = "Activado" if active else "Desactivado"
 
-            # Crear ventana emergente
-            popup = tk.Toplevel(self.root)
-            popup.title("Notificación de Sensor")
-            popup.geometry("250x100")
-
-            # Obtener la posición del puntero del mouse
-            x = self.root.winfo_pointerx()
-            y = self.root.winfo_pointery()
-
-            # Posicionar la ventana en las coordenadas del puntero
-            popup.geometry(f"+{x}+{y}")
-
-            popup.transient(self.root)  # Mantener sobre la ventana principal
-            popup.grab_set()  # Bloquear interacción con la ventana principal
-
-            # Contenido simple
-            ttk.Label(popup, text=f"Sensor: {sensor_name}", font=("Helvetica", 12, "bold")).pack(pady=5)
-            ttk.Label(popup, text=f"Estado: {estado}", font=("Helvetica", 10)).pack(pady=5)
-
-            # Botón para cerrar
-            ttk.Button(popup, text="Cerrar", command=popup.destroy).pack(pady=10)
+            # Mostrar notificación con messagebox
+            messagebox.showinfo(
+                "Notificación de Sensor",
+                f"El sensor '{sensor_name}' ahora está {estado}."
+            )
 
         except Exception as e:
             print(f"Error mostrando notificación de sensor: {e}")
-        
+                
     def on_connection_state_changed(self, connected: bool):
         """
         Callback para manejar cambios de estado de conexión.
