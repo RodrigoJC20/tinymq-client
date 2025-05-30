@@ -908,7 +908,6 @@ class TinyMQGUI:
            
                 self.client.register_admin_result_handler(self.on_admin_result)
                 self.client.register_sensor_status_callback(self.show_sensor_notification)
-                self.setup_admin_notifications() 
                 
                 # AÑADIR ESTA LÍNEA para suscribirse a las notificaciones de control de sensores
                 if self.das and self.das.running:
@@ -2294,44 +2293,7 @@ class TinyMQGUI:
             messagebox.showerror("Error", "No se pudo enviar el comando")
             self.status_label.config(text="Error al enviar comando")
         
-    def _update_sensor_status_ui(self, topic_name, sensor_name, active):
-        """Actualiza la UI cuando se confirma un cambio de estado de sensor."""
-        # Buscar el item en el TreeView
-        for item in self.admin_topic_sensors_tree.get_children():
-            values = self.admin_topic_sensors_tree.item(item, "values")
-            if values[0] == sensor_name:  # Primera columna es el nombre del sensor
-                # Actualizar el estado (segunda columna)
-                new_status = "Activo" if active else "Inactivo"
-                current_values = list(values)
-                current_values[1] = new_status
-                
-                # Actualizar el item
-                self.admin_topic_sensors_tree.item(item, values=current_values)
-                
-                # Mostrar mensaje de confirmación
-                status_text = "activado" if active else "desactivado"
-                messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' {status_text} correctamente")
-                self.status_label.config(text=f"Sensor {sensor_name} {status_text}")
-                
-                # Si estamos conectados al DAS, enviar comando al ESP32
-                if hasattr(self, 'das') and self.das and self.das.running:
-                    try:
-                        # El ventilador es un caso especial que queremos controlar
-                        if sensor_name.lower() == "fan":
-                            command = {
-                                "command": "set_fan",
-                                "value": 1 if active else 0
-                            }
-                            print(f"✅ Enviando comando al ESP32: {command}")
-                            self.das.send_command(command)
-                    except Exception as e:
-                        print(f"❌ Error enviando comando al ESP32: {e}")
-                
-                return
-                
-        # Si llegamos aquí, no encontramos el sensor en la lista
-        self.status_label.config(text="Estado actualizado, pero no encontrado en la lista")
-            
+   
     def create_request_admin_tab(self):
         """Crea la sub-pestaña para solicitar administración de tópicos."""
         request_tab = ttk.Frame(self.admin_notebook)
@@ -3119,72 +3081,9 @@ class TinyMQGUI:
         else:
             messagebox.showerror("Error", "No se pudo enviar la solicitud")
 
-    def setup_admin_notifications(self):
-        print("🔧 [GUI DEBUG] Configurando notificaciones administrativas...")
-        if self.client and self.client.connected:
-            print("✅ [GUI DEBUG] Cliente conectado, registrando handler...")
-            def admin_callback(notification):
-                print(f"🎯 [GUI CALLBACK] Notificación recibida: {notification}")
-                self.root.after(0, lambda: self.on_admin_notification(notification))
-            result = self.client.register_admin_notification_handler(admin_callback)
-            print(f"🔧 [GUI DEBUG] Resultado del registro: {result}")
-        else:
-            print("❌ [GUI DEBUG] Cliente no conectado")
+  
 
-    def on_admin_notification(self, data):
-        print("🔔 [GUI NOTIFICATION] Notificación administrativa recibida")
-        
-        """Maneja notificaciones administrativas recibidas."""
-        try:
-            print(f"🔔 [GUI NOTIFICATION] Procesando notificación: {data}")
-            
-            # Si es un comando para sensor (nuevo caso)
-            if "command" in data and data["command"] == "set_sensor":
-                print(f"🔧 Comando de sensor recibido: {data['sensor_name']} = {data['active']}")
-                
-                if self.das and self.das.running:
-                    # Convertir al formato que espera el ESP32
-                    esp_command = {
-                        "command": f"set_{data['sensor_name']}",
-                        "value": 1 if data["active"] else 0
-                    }
-                    
-                    # Enviar el comando al ESP32 a través del DAS
-                    success = self.das.send_command(esp_command)
-                    if success:
-                        print(f"✅ Comando enviado al ESP32: {data['sensor_name']} {'activado' if data['active'] else 'desactivado'}")
-                        # Actualizar interfaz si lo necesitas
-                        if hasattr(self, 'update_sensor_status'):
-                            self.update_sensor_status(data['sensor_name'], data['active'])
-                    else:
-                        print(f"❌ Error enviando comando al ESP32")
-                else:
-                    print(f"⚠️ No hay DAS configurado o no está funcionando")
-                return
-            
-            notification_type = data.get("type")
-            if notification_type == "request":
-                topic_name = data.get("topic_name", "")
-                requester_id = data.get("requester_id", "")
-                msg = f"Has recibido una nueva solicitud de administración para el tópico '{topic_name}' de '{requester_id}'."
-                self.show_admin_notification("Nueva solicitud de administración", msg)
-                return
-
-                
-            # Resto del código existente para otros tipos de notificaciones
-            notification_type = data.get("type")
-            print(f"🔔 [GUI NOTIFICATION] Tipo: {notification_type}")
-            
-            if notification_type == "request":
-                # Código existente para solicitudes...
-                pass
-            else:
-                print(f"❌ [GUI NOTIFICATION] Tipo de notificación no reconocido: {notification_type}")
-        except Exception as e:
-            print(f"❌ [GUI NOTIFICATION] Error procesando notificación: {e}")
-            import traceback
-            traceback.print_exc()
-        
+   
     def show_admin_notification(self, title, message):
         
         """Muestra una ventana de notificación flotante."""
@@ -3562,44 +3461,26 @@ class TinyMQGUI:
             messagebox.showerror("Error", "No se pudo marcar el sensor como activable")
 
     def show_sensor_notification(self, sensor_data):
-        print(f"DEBUG: show_sensor_notification llamado con: {sensor_data}")
-
-        """Muestra una notificación cuando cambia el estado de un sensor."""
+        """Muestra una notificación simple cuando cambia el estado de un sensor."""
         try:
-            topic_name = sensor_data.get("topic_name", "desconocido")
             sensor_name = sensor_data.get("sensor_name", "desconocido")
             active = sensor_data.get("active", False)
-            estado = "activado" if active else "desactivado"
-            
+            estado = "Activado" if active else "Desactivado"
+
             # Crear ventana emergente
             popup = tk.Toplevel(self.root)
-            popup.title("Estado de Sensor Actualizado")
-            popup.geometry("320x180+50+50")
-            popup.attributes("-topmost", True)
-            popup.transient(self.root)
-            
-            # Añadir contenido
-            frame = ttk.Frame(popup, padding=15)
-            frame.pack(fill="both", expand=True)
-            
-            # Icono según estado
-            icon_label = ttk.Label(frame, text="✅" if active else "❌", font=("Helvetica", 24))
-            icon_label.pack(pady=(0, 10))
-            
-            # Mensaje principal
-            ttk.Label(frame, text=f"Sensor {sensor_name}", 
-                    font=("Helvetica", 12, "bold")).pack(pady=2)
-            ttk.Label(frame, text=f"ha sido {estado} exitosamente", 
-                    font=("Helvetica", 11)).pack(pady=2)
-            ttk.Label(frame, text=f"Tópico: {topic_name}", 
-                    font=("Helvetica", 10), foreground="gray").pack(pady=2)
-            
-            # Botón de cerrar
-            ttk.Button(frame, text="Aceptar", command=popup.destroy).pack(pady=(10, 0))
-            
-            # Auto-cerrar después de 10 segundos
-            popup.after(10000, popup.destroy)
-            
+            popup.title("Notificación de Sensor")
+            popup.geometry("250x100")
+            popup.transient(self.root)  # Mantener sobre la ventana principal
+            popup.grab_set()  # Bloquear interacción con la ventana principal
+
+            # Contenido simple
+            ttk.Label(popup, text=f"Sensor: {sensor_name}", font=("Helvetica", 12, "bold")).pack(pady=5)
+            ttk.Label(popup, text=f"Estado: {estado}", font=("Helvetica", 10)).pack(pady=5)
+
+            # Botón para cerrar
+            ttk.Button(popup, text="Cerrar", command=popup.destroy).pack(pady=10)
+
         except Exception as e:
             print(f"Error mostrando notificación de sensor: {e}")
 

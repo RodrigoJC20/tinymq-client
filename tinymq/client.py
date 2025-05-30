@@ -447,6 +447,8 @@ class Client:
                 if self._admin_notify_callback:
                     print("DEBUG: Llamando a _admin_notify_callback")
                     self._admin_notify_callback(notification_data)
+                else:
+                    print("DEBUG: No hay callback registrado para ADMIN_NOTIFY")
             except Exception as e:
                 print(f"Error procesando notificación administrativa: {e}")
 
