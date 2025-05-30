@@ -39,6 +39,8 @@ class TinyMQGUI:
     def on_admin_result(self, result_data):
         """Maneja los resultados de solicitudes administrativas."""
         try:
+                
+            
             if result_data.get('__admin_revoked', False):
                 # Notificación de revocación de privilegios
                 topic_name = result_data.get('topic_name', '')
@@ -344,7 +346,7 @@ class TinyMQGUI:
         # Lista de tópicos con selección múltiple
         left = ttk.LabelFrame(main_frame, text="Tópicos")
         left.pack(side="left", fill="y", padx=(0, 10))
-        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED)
+        self.topics_listbox = tk.Listbox(left, width=30, selectmode=tk.EXTENDED, exportselection=0) # <--- AÑADIR exportselection=0
         self.topics_listbox.pack(fill="y", expand=True, padx=5, pady=5)
         self.topics_listbox.bind('<<ListboxSelect>>', self.on_topic_selected)
         ttk.Button(left, text="Refrescar", command=self.refresh_topics).pack(fill="x", padx=5, pady=5)
@@ -391,6 +393,8 @@ class TinyMQGUI:
         self.sensor_to_add_var = tk.StringVar()
         self.sensor_combo = ttk.Combobox(add_frame, textvariable=self.sensor_to_add_var, state="readonly")
         self.sensor_combo.pack(side="left", padx=5, expand=True, fill="x")
+        self.sensor_combo.bind("<<ComboboxSelected>>", self.on_sensor_combo_selected)
+
         ttk.Button(add_frame, text="Agregar", command=self.add_sensor_to_topic).pack(side="left", padx=5)
         ttk.Button(add_frame, text="Eliminar", command=self.remove_sensor_from_topic).pack(side="left", padx=5)
         ttk.Button(add_frame, text="Marcar como Activable", command=self.mark_sensor_as_activable).pack(side="left", padx=5)
@@ -901,10 +905,10 @@ class TinyMQGUI:
                 print(f"📢 Suscribiéndose a notificaciones administrativas: {admin_topic}")
                 self.client.subscribe(admin_topic, self.on_admin_notify_message)
                 
-                # Registrar callbacks para notificaciones administrativas
-                self.client.register_admin_notification_handler(self.on_admin_notification)
+           
                 self.client.register_admin_result_handler(self.on_admin_result)
                 self.client.register_sensor_status_callback(self.show_sensor_notification)
+                self.client.register_admin_notification_handler(self.on_admin_notify_message)
                 
                 # AÑADIR ESTA LÍNEA para suscribirse a las notificaciones de control de sensores
                 if self.das and self.das.running:
@@ -935,22 +939,21 @@ class TinyMQGUI:
             self.status_label.config(text="No se pudo conectar al broker")
             messagebox.showerror("Error", "No se pudo conectar al broker")
 
-    def on_admin_notify_message(self, topic_str, payload):
+    def on_admin_notify_message(self, notification_data):
         """Procesa notificaciones administrativas recibidas por publicación."""
         try:
-            if not payload:
+            if not notification_data:
                 return
-                
-            print(f"📢 Notificación admin recibida en {topic_str}: {payload}")
-            data = json.loads(payload.decode('utf-8'))
-            
+    
+            print(f"📢 Notificación admin recibida: {notification_data}")
+    
             # Verificar si es un comando de sensor
-            if isinstance(data, dict) and data.get("command") == "set_sensor":
-                sensor_name = data.get("sensor_name")
-                active = data.get("active")
-                
+            if isinstance(notification_data, dict) and notification_data.get("command") == "set_sensor":
+                sensor_name = notification_data.get("sensor_name")
+                active = notification_data.get("active")
+    
                 print(f"🔄 Procesando comando remoto: {sensor_name}={active}")
-                
+    
                 # Enviar al ESP32 a través del DAS
                 if self.das and self.das.running:
                     cmd = {
@@ -1094,6 +1097,10 @@ class TinyMQGUI:
             messagebox.showerror("Error", f"Error al refrescar sensores: {str(e)}")
 
     def on_sensor_selected(self, event):
+        # Guardar la selección actual de tópicos antes de procesar
+        topics_selection = self.topics_listbox.curselection()
+        topics_indices = list(topics_selection) if topics_selection else []
+        
         selection = self.sensors_listbox.curselection()
         if not selection:
             return
@@ -1121,8 +1128,44 @@ class TinyMQGUI:
                 self.realtime_text.config(state="normal")
                 self.realtime_text.insert(tk.END, f"Monitoreo en tiempo real activado para sensor: {sensor['name']}\nEsperando datos...\n\n")
                 self.realtime_text.config(state="disabled")
+            
+            # Restaurar la selección de tópicos que teníamos antes
+            if topics_indices:
+                for idx in topics_indices:
+                    if idx < self.topics_listbox.size():
+                        self.topics_listbox.selection_set(idx)
+                        
         except Exception as e:
             messagebox.showerror("Error", f"Error al cargar detalles del sensor: {str(e)}")
+
+    def on_sensor_combo_selected(self, event):
+        """Mantiene la selección del tópico cuando se selecciona un sensor del combo box"""
+        # Guardar selección de tópicos actual
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            return  # No hay tópico seleccionado, nada que preservar
+        
+        # Guardar los índices completos seleccionados
+        selected_indices = list(selection)
+        
+        # Hacer varios intentos de restauración con diferentes retrasos
+        # para contrarrestar cualquier evento que pueda deseleccionar después
+        for delay in [10, 50, 100, 200, 300]:  # Múltiples intentos espaciados
+            self.root.after(delay, lambda idx=selected_indices: self._restore_full_selection(idx))
+    
+    def _restore_full_selection(self, indices):
+        """Restaura la selección completa de tópicos por sus índices"""
+        # Primero comprobamos que los índices son válidos
+        valid_indices = [idx for idx in indices if idx < self.topics_listbox.size()]
+        if not valid_indices:
+            return
+        
+        # NO limpiamos la selección actual, solo añadimos los que faltan
+        for idx in valid_indices:
+            self.topics_listbox.selection_set(idx)
+            
+        # Hacer visible el primer tópico seleccionado
+        self.topics_listbox.see(valid_indices[0])
 
     def load_sensor_history(self):
         sensor_id = self.sensor_id_var.get()
@@ -1153,15 +1196,9 @@ class TinyMQGUI:
 
     def refresh_topics(self):
         try:
-            # Guardar el tópico seleccionado actualmente (por nombre)
+            # Guardar el índice seleccionado actualmente
             selected = self.topics_listbox.curselection()
-            selected_topic_name = None
-            if selected:
-                selected_item = self.topics_listbox.get(selected[0])
-                # El formato es "id: nombre [✓]"
-                parts = selected_item.split(":")
-                if len(parts) > 1:
-                    selected_topic_name = parts[1].split("[")[0].strip()
+            selected_index = selected[0] if selected else None
 
             topics = self.db.get_topics()
             self.topics_listbox.delete(0, tk.END)
@@ -1175,15 +1212,10 @@ class TinyMQGUI:
                     self.topics_listbox.insert(tk.END, display)
                     topic_names.append(topic['name'])
 
-            # Restaurar la selección si corresponde
-            if selected_topic_name:
-                for i in range(self.topics_listbox.size()):
-                    item = self.topics_listbox.get(i)
-                    # Buscar por nombre exacto
-                    if f": {selected_topic_name} " in item or item.endswith(f": {selected_topic_name} [✓]") or item.endswith(f": {selected_topic_name} [ ]"):
-                        self.topics_listbox.selection_set(i)
-                        self.topics_listbox.see(i)
-                        break
+            # Restaurar la selección por índice si corresponde
+            if selected_index is not None and self.topics_listbox.size() > selected_index:
+                self.topics_listbox.selection_set(selected_index)
+                self.topics_listbox.see(selected_index)
 
             sensors = self.db.get_sensors()
             sensor_names = [s["name"] for s in sensors]
@@ -1191,7 +1223,7 @@ class TinyMQGUI:
             self.status_label.config(text=f"Se encontraron {len(topics)} tópicos")
         except Exception as e:
             messagebox.showerror("Error", f"Error al refrescar tópicos: {str(e)}")
-            
+        
     def on_topic_selected(self, event):
         selection = self.topics_listbox.curselection()
         if not selection:
@@ -1295,6 +1327,8 @@ class TinyMQGUI:
             messagebox.showinfo("Información", "Selecciona un sensor para agregar")
             return
         
+        selected_indices = list(selection)
+        
         success_count = 0
         for selected_index in selection:
             selected_item = self.topics_listbox.get(selected_index)
@@ -1324,7 +1358,8 @@ class TinyMQGUI:
         
         if success_count > 0:
             messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' añadido a {success_count} tópico(s)")
-            self.on_topic_selected(None)
+            self.refresh_topics_preserve_selection(selected_indices)
+
 
             
     def remove_sensor_from_topic(self):
@@ -1337,6 +1372,9 @@ class TinyMQGUI:
         if not sensor_name:
             messagebox.showinfo("Información", "Selecciona un sensor para eliminar")
             return
+        
+        selected_indices = list(selection)
+
         
         success_count = 0
         not_found_topics = []
@@ -1378,7 +1416,77 @@ class TinyMQGUI:
         if message:
             messagebox.showinfo("Resultado", message)
         
-        self.on_topic_selected(None)
+        self.refresh_topics_preserve_selection(selected_indices)
+
+    def refresh_topics_preserve_selection(self, indices_to_select=None):
+        """Actualiza la lista de tópicos y mantiene la selección anterior"""
+        try:
+            # Si no se proporcionan índices, intentar usar la selección actual
+            if indices_to_select is None:
+                selected = self.topics_listbox.curselection()
+                indices_to_select = list(selected) if selected else []
+
+            # Obtener los tópicos y actualizar la lista
+            topics = self.db.get_topics()
+            self.topics_listbox.delete(0, tk.END)
+            topic_names = []
+            
+            if not topics:
+                self.topics_listbox.insert(tk.END, "Sin tópicos registrados")
+            else: 
+                for topic in topics:
+                    status = "✓" if topic["publish"] else " "
+                    display = f"{topic['id']}: {topic['name']} [{status}]"
+                    self.topics_listbox.insert(tk.END, display)
+                    topic_names.append(topic['name'])
+
+            # Restaurar la selección
+            for index in indices_to_select:
+                if index < self.topics_listbox.size():
+                    self.topics_listbox.selection_set(index)
+            
+            # Si hay alguna selección, actualizar el panel de detalles
+            if indices_to_select and indices_to_select[0] < self.topics_listbox.size():
+                self.topics_listbox.see(indices_to_select[0])
+                self.on_topic_selected_internal(None)
+            
+            # Actualizar sensores disponibles
+            sensors = self.db.get_sensors()
+            sensor_names = [s["name"] for s in sensors]
+            self.sensor_combo['values'] = sensor_names
+            self.status_label.config(text=f"Se encontraron {len(topics)} tópicos")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al refrescar tópicos: {str(e)}")
+
+    # Nueva función para manejar la selección de tópico sin modificar la selección
+    def on_topic_selected_internal(self, event):
+        """Como on_topic_selected pero sin cambiar la selección"""
+        selection = self.topics_listbox.curselection()
+        if not selection:
+            return
+        
+        # Usar el primer tópico seleccionado para mostrar detalles
+        selected_index = selection[0]
+        selected_item = self.topics_listbox.get(selected_index)
+        topic_id = selected_item.split(":")[0].strip()
+        try:
+            topic = self.db.get_topic(topic_id)
+            if not topic:
+                return
+            self.topic_id_var.set(str(topic["id"]))
+            self.topic_name_var.set(topic["name"])
+            self.topic_publish_var.set("Sí" if topic["publish"] else "No")
+            sensors = self.db.get_topic_sensors(topic["name"])
+            self.topic_sensors_text.config(state="normal")
+            self.topic_sensors_text.delete("1.0", tk.END)
+            if not sensors:
+                self.topic_sensors_text.insert(tk.END, "No hay sensores asociados a este tópico.")
+            else:
+                for sensor in sensors:
+                    self.topic_sensors_text.insert(tk.END, f"- {sensor['name']}: {sensor['last_value']}\n")
+            self.topic_sensors_text.config(state="disabled")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar detalles del tópico: {str(e)}")
 
     def refresh_subscriptions(self):
         try:
@@ -2185,44 +2293,7 @@ class TinyMQGUI:
             messagebox.showerror("Error", "No se pudo enviar el comando")
             self.status_label.config(text="Error al enviar comando")
         
-    def _update_sensor_status_ui(self, topic_name, sensor_name, active):
-        """Actualiza la UI cuando se confirma un cambio de estado de sensor."""
-        # Buscar el item en el TreeView
-        for item in self.admin_topic_sensors_tree.get_children():
-            values = self.admin_topic_sensors_tree.item(item, "values")
-            if values[0] == sensor_name:  # Primera columna es el nombre del sensor
-                # Actualizar el estado (segunda columna)
-                new_status = "Activo" if active else "Inactivo"
-                current_values = list(values)
-                current_values[1] = new_status
-                
-                # Actualizar el item
-                self.admin_topic_sensors_tree.item(item, values=current_values)
-                
-                # Mostrar mensaje de confirmación
-                status_text = "activado" if active else "desactivado"
-                messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' {status_text} correctamente")
-                self.status_label.config(text=f"Sensor {sensor_name} {status_text}")
-                
-                # Si estamos conectados al DAS, enviar comando al ESP32
-                if hasattr(self, 'das') and self.das and self.das.running:
-                    try:
-                        # El ventilador es un caso especial que queremos controlar
-                        if sensor_name.lower() == "fan":
-                            command = {
-                                "command": "set_fan",
-                                "value": 1 if active else 0
-                            }
-                            print(f"✅ Enviando comando al ESP32: {command}")
-                            self.das.send_command(command)
-                    except Exception as e:
-                        print(f"❌ Error enviando comando al ESP32: {e}")
-                
-                return
-                
-        # Si llegamos aquí, no encontramos el sensor en la lista
-        self.status_label.config(text="Estado actualizado, pero no encontrado en la lista")
-            
+   
     def create_request_admin_tab(self):
         """Crea la sub-pestaña para solicitar administración de tópicos."""
         request_tab = ttk.Frame(self.admin_notebook)
@@ -3010,72 +3081,11 @@ class TinyMQGUI:
         else:
             messagebox.showerror("Error", "No se pudo enviar la solicitud")
 
-    def setup_admin_notifications(self):
-        """Configura las notificaciones para administración."""
-        print("🔧 [GUI DEBUG] Configurando notificaciones administrativas...")
-        if self.client and self.client.connected:
-            print("✅ [GUI DEBUG] Cliente conectado, registrando handler...")
-            
-            def admin_callback(notification):
-                print(f"🎯 [GUI CALLBACK] Notificación recibida: {notification}")
-                # Ejecutar en el hilo principal de Tkinter
-                self.root.after(0, lambda: self.on_admin_notification(notification))
-            
-            result = self.client.register_admin_notification_handler(admin_callback)
-            print(f"🔧 [GUI DEBUG] Resultado del registro: {result}")
-            
-            if result:
-                print("✅ [GUI DEBUG] Notificaciones configuradas correctamente")
-            else:
-                print("❌ [GUI DEBUG] Error configurando notificaciones")
-                
-        else:
-            print("❌ [GUI DEBUG] Cliente no conectado")
+  
 
-    def on_admin_notification(self, data):
-        """Maneja notificaciones administrativas recibidas."""
-        try:
-            print(f"🔔 [GUI NOTIFICATION] Procesando notificación: {data}")
-            
-            # Si es un comando para sensor (nuevo caso)
-            if "command" in data and data["command"] == "set_sensor":
-                print(f"🔧 Comando de sensor recibido: {data['sensor_name']} = {data['active']}")
-                
-                if self.das and self.das.running:
-                    # Convertir al formato que espera el ESP32
-                    esp_command = {
-                        "command": f"set_{data['sensor_name']}",
-                        "value": 1 if data["active"] else 0
-                    }
-                    
-                    # Enviar el comando al ESP32 a través del DAS
-                    success = self.das.send_command(esp_command)
-                    if success:
-                        print(f"✅ Comando enviado al ESP32: {data['sensor_name']} {'activado' if data['active'] else 'desactivado'}")
-                        # Actualizar interfaz si lo necesitas
-                        if hasattr(self, 'update_sensor_status'):
-                            self.update_sensor_status(data['sensor_name'], data['active'])
-                    else:
-                        print(f"❌ Error enviando comando al ESP32")
-                else:
-                    print(f"⚠️ No hay DAS configurado o no está funcionando")
-                return
-                
-            # Resto del código existente para otros tipos de notificaciones
-            notification_type = data.get("type")
-            print(f"🔔 [GUI NOTIFICATION] Tipo: {notification_type}")
-            
-            if notification_type == "request":
-                # Código existente para solicitudes...
-                pass
-            else:
-                print(f"❌ [GUI NOTIFICATION] Tipo de notificación no reconocido: {notification_type}")
-        except Exception as e:
-            print(f"❌ [GUI NOTIFICATION] Error procesando notificación: {e}")
-            import traceback
-            traceback.print_exc()
-        
+   
     def show_admin_notification(self, title, message):
+        
         """Muestra una ventana de notificación flotante."""
         # Crear ventana flotante
         popup = tk.Toplevel(self.root)
@@ -3449,49 +3459,23 @@ class TinyMQGUI:
             messagebox.showinfo("Éxito", f"Sensor '{sensor_name}' marcado como activable en '{topic_name}'")
         else:
             messagebox.showerror("Error", "No se pudo marcar el sensor como activable")
-
+            
     def show_sensor_notification(self, sensor_data):
-        print(f"DEBUG: show_sensor_notification llamado con: {sensor_data}")
-
-        """Muestra una notificación cuando cambia el estado de un sensor."""
+        """Muestra una notificación simple utilizando un messagebox."""
         try:
-            topic_name = sensor_data.get("topic_name", "desconocido")
             sensor_name = sensor_data.get("sensor_name", "desconocido")
             active = sensor_data.get("active", False)
-            estado = "activado" if active else "desactivado"
-            
-            # Crear ventana emergente
-            popup = tk.Toplevel(self.root)
-            popup.title("Estado de Sensor Actualizado")
-            popup.geometry("320x180+50+50")
-            popup.attributes("-topmost", True)
-            popup.transient(self.root)
-            
-            # Añadir contenido
-            frame = ttk.Frame(popup, padding=15)
-            frame.pack(fill="both", expand=True)
-            
-            # Icono según estado
-            icon_label = ttk.Label(frame, text="✅" if active else "❌", font=("Helvetica", 24))
-            icon_label.pack(pady=(0, 10))
-            
-            # Mensaje principal
-            ttk.Label(frame, text=f"Sensor {sensor_name}", 
-                    font=("Helvetica", 12, "bold")).pack(pady=2)
-            ttk.Label(frame, text=f"ha sido {estado} exitosamente", 
-                    font=("Helvetica", 11)).pack(pady=2)
-            ttk.Label(frame, text=f"Tópico: {topic_name}", 
-                    font=("Helvetica", 10), foreground="gray").pack(pady=2)
-            
-            # Botón de cerrar
-            ttk.Button(frame, text="Aceptar", command=popup.destroy).pack(pady=(10, 0))
-            
-            # Auto-cerrar después de 10 segundos
-            popup.after(10000, popup.destroy)
-            
+            estado = "Activado" if active else "Desactivado"
+
+            # Mostrar notificación con messagebox
+            messagebox.showinfo(
+                "Notificación de Sensor",
+                f"El sensor '{sensor_name}' ahora está {estado}."
+            )
+
         except Exception as e:
             print(f"Error mostrando notificación de sensor: {e}")
-
+                
     def on_connection_state_changed(self, connected: bool):
         """
         Callback para manejar cambios de estado de conexión.

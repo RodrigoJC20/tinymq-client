@@ -447,6 +447,8 @@ class Client:
                 if self._admin_notify_callback:
                     print("DEBUG: Llamando a _admin_notify_callback")
                     self._admin_notify_callback(notification_data)
+                else:
+                    print("DEBUG: No hay callback registrado para ADMIN_NOTIFY")
             except Exception as e:
                 print(f"Error procesando notificación administrativa: {e}")
 
@@ -1208,7 +1210,6 @@ class Client:
         print(f"[DEBUG] Registrado handler de resultados administrativos")    
     
             
-            # En client.py - Agregar esta función nueva
     def _handle_admin_request_response(self, packet: Packet) -> None:
         """Maneja la respuesta de una solicitud de administración."""
         try:

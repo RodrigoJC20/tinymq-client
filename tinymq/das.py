@@ -13,7 +13,7 @@ class DataAcquisitionService:
     Data Acquisition Service for TinyMQ client using Serial communication.
     """
 
-    def __init__(self, db: Database, serial_port: str = "COM7", baud_rate: int = 115200, verbose: bool = False):
+    def __init__(self, db: Database, serial_port: str = "COM8", baud_rate: int = 115200, verbose: bool = False):
         """
         Args:
             db: Instancia de la base de datos
