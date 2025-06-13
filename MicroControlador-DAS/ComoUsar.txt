@@ -1,0 +1,16 @@
+Guía rápida para usar el sistema Microcontrolador-DAS
+Para usar este sistema de comunicación entre Microcontrolador y Python, sigue estos pasos: 
+
+1) Carga el archivo plantilla.ino en tu Microcontrolador, personalizando las definiciones de pines según tu Microcontrolador; 
+2) Modifica las lecturas de sensores en la función loop() reemplazando los ejemplos con tus propios sensores; 
+3) Personaliza el formato JSON en sendSensorData() para que los nombres coincidan con tus sensores; 
+4) En Python, importa e inicializa el DAS con das = DataAcquisitionService(db, "COM8", 115200) y luego llama a das.start(); 
+5) Para recibir datos de sensores, registra una función callback con das.add_data_callback(mi_funcion); 
+6) Para controlar actuadores, envía comandos con das.send_command({"command":"set_actuator", "value":1}). 
+
+El Microcontrolador enviará automáticamente lecturas cada 5 segundos en formato JSON y el DAS las almacenará en la base de datos 
+mientras procesa los comandos que envíes al microcontrolador.
+
+Notas:
+    Recuerda tener apagado el Serial Monitor de Arduino.ide. De lo contrario no enviara los datos al serial por usb.
+    Debes estar conectado por usb a tu equipo.
